@@ -129,6 +129,12 @@ class ClickLog(Base):
     user_agent = Column(Text, default='N/A')
     clicked_at = Column(String(100), default='N/A')
 
+class AppSetting(Base):
+    """Bảng lưu cấu hình hệ thống (như Webhook URL gửi mail qua HTTPS)"""
+    __tablename__ = 'app_settings'
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, default='')
+
 engine = None
 Session = None
 last_db_error = ""
@@ -241,6 +247,20 @@ def get_active_base_url():
         pass
     return configured_url or "http://127.0.0.1:5000"
 
+def get_saved_webhook_url():
+    """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
+    session = get_db_session()
+    if session:
+        try:
+            row = session.query(AppSetting).filter_by(key='webhook_url').first()
+            if row and row.value and row.value.strip():
+                return row.value.strip()
+        except Exception:
+            session.rollback()
+        finally:
+            Session.remove()
+    return config.get("smtp", {}).get("webhook_url", "").strip()
+
 # --- Hàm gửi email (Hỗ trợ cả Webhook HTTPS & SMTP có timeout chống treo) ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
@@ -272,7 +292,7 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
 """
 
     # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443 (Không bị Render chặn)
-    webhook_url = smtp_conf.get("webhook_url", "").strip()
+    webhook_url = get_saved_webhook_url()
     if webhook_url:
         try:
             payload = json.dumps({
@@ -286,11 +306,18 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
                 data=payload,
                 headers={'Content-Type': 'application/json'}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                safe_log(f"[WEBHOOK OK] Đã gửi email qua HTTPS tới {recipient_email}")
-                return True, f"Đã gửi email tới {recipient_email} (qua HTTPS Webhook)"
+            try:
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    safe_log(f"[WEBHOOK OK] Đã gửi email qua HTTPS tới {recipient_email}")
+                    return True, f"Đã gửi email thành công tới {recipient_email} (qua HTTPS Gmail Webhook)!"
+            except urllib.error.HTTPError as he:
+                # Google Apps Script thực thi doPost xong đôi khi trả 302/405 khi redirect sang googleusercontent
+                if he.code in (200, 302, 405):
+                    return True, f"Đã gửi email thành công tới {recipient_email} (qua HTTPS Gmail Webhook)!"
+                raise he
         except Exception as e:
             safe_log(f"[WEBHOOK LỖI] {e}")
+            return False, f"Lỗi Webhook HTTPS: {e}"
 
     # 2. Gửi qua SMTP (Có timeout=8s để không bao giờ gây lỗi 500 Worker Timeout trên Gunicorn/Render)
     if smtp_conf.get("enabled"):
@@ -332,6 +359,31 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
 @app.route('/')
 def home():
     return redirect(url_for('dashboard'))
+
+@app.route('/settings/webhook', methods=['POST'])
+def save_webhook():
+    """Lưu Google Apps Script HTTPS Webhook URL vào bảng app_settings trên Aiven DB"""
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+
+    webhook_url = request.form.get('webhook_url', '').strip()
+    try:
+        row = session.query(AppSetting).filter_by(key='webhook_url').first()
+        if row:
+            row.value = webhook_url
+        else:
+            session.add(AppSetting(key='webhook_url', value=webhook_url))
+        session.commit()
+        if webhook_url:
+            return redirect(url_for('dashboard', msg="Đã lưu HTTPS Gmail Webhook URL thành công! Giờ bạn có thể bấm Gửi Email ngay trên Render.", status="success"))
+        else:
+            return redirect(url_for('dashboard', msg="Đã xóa cấu hình Webhook URL.", status="success"))
+    except Exception as e:
+        session.rollback()
+        return redirect(url_for('dashboard', msg=f"Lỗi lưu cấu hình: {e}", status="error"))
+    finally:
+        Session.remove()
 
 @app.route('/users/add', methods=['POST'])
 def add_user():
@@ -408,6 +460,7 @@ def send_single_user(user_id):
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
+    saved_webhook = get_saved_webhook_url()
 
     try:
         u = session.query(User).filter_by(id=user_id).first()
@@ -438,6 +491,7 @@ def send_all_users():
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
+    saved_webhook = get_saved_webhook_url()
 
     try:
         users = session.query(User).all()
@@ -660,6 +714,7 @@ def dashboard():
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
+    saved_webhook = get_saved_webhook_url()
 
     html_content = """
     <!DOCTYPE html>
@@ -736,6 +791,31 @@ def dashboard():
                     <p class="text-xs uppercase font-semibold text-gray-500">Tổng Lượt Click (Bảng click_logs)</p>
                     <p class="text-3xl font-extrabold text-purple-600 mt-1">{{ click_logs|length }}</p>
                 </div>
+            </div>
+
+            <!-- Cấu hình Gửi Mail qua HTTPS (Google Apps Script) để vượt chặn cổng 465 trên Render Free -->
+            <div class="bg-blue-50 p-5 rounded-xl shadow-sm border border-blue-200">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-3">
+                    <div>
+                        <h2 class="text-base font-bold text-blue-900">
+                            ⚡ Cấu Hình Gửi Mail HTTPS Từ Render (Miễn Phí 100% - Vượt Chặn Cổng SMTP 465/587)
+                        </h2>
+                        <p class="text-xs text-blue-700 mt-0.5">
+                            Gói Free của Render chặn cổng SMTP 465/587. Dán link <strong>Google Apps Script Web App</strong> vào đây để gửi mail trực tiếp qua cổng HTTPS (443):
+                        </p>
+                    </div>
+                    <span class="text-xs font-semibold px-2.5 py-1 rounded-full {% if saved_webhook %}bg-green-100 text-green-800 border border-green-300{% else %}bg-yellow-100 text-yellow-800 border border-yellow-300{% endif %}">
+                        {% if saved_webhook %}✅ Đang bật HTTPS Webhook{% else %}⚠️ Chưa cấu hình HTTPS Webhook{% endif %}
+                    </span>
+                </div>
+                <form action="/settings/webhook" method="POST" class="flex flex-col md:flex-row gap-3">
+                    <input type="url" name="webhook_url" value="{{ saved_webhook }}"
+                        placeholder="Dán link https://script.google.com/macros/s/.../exec vào đây"
+                        class="flex-1 px-3 py-2 border border-blue-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button type="submit" class="px-5 py-2 bg-blue-700 text-white font-semibold rounded-lg hover:bg-blue-800 text-sm transition shadow whitespace-nowrap">
+                        💾 Lưu Webhook URL
+                    </button>
+                </form>
             </div>
 
             <!-- Form thêm User trực tiếp vào Database -->
@@ -909,6 +989,7 @@ def dashboard():
         click_logs=click_logs,
         base_url=base_url,
         tracking_path=tracking_path,
+        saved_webhook=saved_webhook,
         msg=msg,
         status=status
     )
