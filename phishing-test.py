@@ -58,9 +58,9 @@ def load_config():
             "tracking_path": "/v",
             "use_internal_awareness": True,
             "external_landing_page_url": "https://sites.google.com/view/chopda-enterprise-test/home",
-            "email_subject": "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên",
-            "sender_display_name": "Cổng Thông Tin Nhân Sự",
-            "sender_email": "security-alert@internal-portal.com"
+            "email_subject": "Kế hoạch rà soát và đăng ký chế độ phúc lợi định kỳ",
+            "sender_display_name": "Ban Hành Chính - Nhân Sự",
+            "sender_email": "hr-office@internal-portal.com"
         },
         "smtp": {
             "enabled": True,
@@ -274,82 +274,85 @@ def get_active_base_url():
         pass
     return configured_url or "http://127.0.0.1:5000"
 
-def get_saved_webhook_url():
-    """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình (Không đóng session đang mở của route)"""
+def get_saved_setting(key, default_val=""):
+    """Đọc cấu hình từ bảng app_settings trên Database"""
     session = get_db_session()
     if session:
         try:
-            row = session.query(AppSetting).filter_by(key='webhook_url').first()
+            row = session.query(AppSetting).filter_by(key=key).first()
             if row and row.value and row.value.strip():
                 return row.value.strip()
         except Exception:
             session.rollback()
-    return config.get("smtp", {}).get("webhook_url", "").strip()
+    return default_val
 
-# --- Hàm gửi email định dạng HTML với Hyperlink ẩn đường dẫn ---
+def get_saved_webhook_url():
+    """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
+    return get_saved_setting('webhook_url', config.get("smtp", {}).get("webhook_url", "").strip())
+
+# --- Hàm gửi email định dạng HTML tự nhiên (Tối ưu vượt bộ lọc Junk Mail của Outlook/M365) ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
-    Gửi email HTML sử dụng Hyperlink (ẩn hoàn toàn đường dẫn thô trong nội dung email).
-    Trả về tuple: (success: bool, message: str)
+    Gửi email HTML sử dụng Hyperlink với văn phong hành chính nội bộ tự nhiên,
+    tránh các từ khóa nhạy cảm khiến Microsoft 365 đưa vào Junk Mail.
     """
     camp_conf = config.get("campaign", {})
     smtp_conf = config.get("smtp", {})
 
-    sender_name = camp_conf.get("sender_display_name", "Cổng Thông Tin Nhân Sự")
+    sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Ban Hành Chính - Nhân Sự"))
     if smtp_conf.get("enabled") and smtp_conf.get("username"):
         sender_email = smtp_conf.get("username")
     else:
-        sender_email = camp_conf.get("sender_email", "security-alert@internal-portal.com")
+        sender_email = camp_conf.get("sender_email", "hr-office@internal-portal.com")
 
-    subject = camp_conf.get("email_subject", "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên")
+    subject = get_saved_setting("email_subject", camp_conf.get("email_subject", "Kế hoạch rà soát và đăng ký chế độ phúc lợi định kỳ"))
 
-    # Nội dung văn bản thuần dự phòng (luôn kèm link rút gọn phòng trường hợp Apps Script chưa bật htmlBody)
-    plain_body = f"""Kính gửi {recipient_name},
+    plain_body = f"""Chào {recipient_name},
 
-Hệ thống phát hiện tài khoản của bạn cần được cập nhật và xác thực thông tin quyền lợi nhân sự định kỳ.
-Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng truy cập Cổng Xác Thực Nhân Sự tại liên kết dưới đây:
+Ban Hành Chính - Nhân Sự gửi đến bạn phiếu rà soát thông tin phúc lợi và chế độ nhân viên định kỳ trong quý này.
 
+Bạn vui lòng kiểm tra và xác nhận thông tin cá nhân tại biểu mẫu nội bộ:
 {unique_link}
 
-Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
+Nếu có thông tin cần điều chỉnh, vui lòng phản hồi trước ngày kết thúc đợt rà soát để bộ phận tổng hợp danh sách.
 
 Trân trọng,
 {sender_name}
-Bộ phận Quản Trị Hệ Thống & Nhân Sự
 """
 
-    # Nội dung HTML chuyên nghiệp: Dùng Hyperlink và Nút bấm, KHÔNG hiển thị đường link thô
-    html_body = f"""
-    <div style="font-family: Arial, Helvetica, sans-serif; color: #222222; max-width: 600px; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
-        <h2 style="color: #1e40af; margin-top: 0; font-size: 18px; border-bottom: 2px solid #eff6ff; padding-bottom: 10px;">
-            {sender_name} - Thông Báo Xác Thực Định Kỳ
-        </h2>
-        <p>Kính gửi <strong>{recipient_name}</strong>,</p>
-        <p>
-            Hệ thống quản trị ghi nhận tài khoản nhân viên của bạn cần được đồng bộ và xác thực thông tin quyền lợi nhân sự định kỳ.
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin: 0; padding: 0; background-color: #f9fafb;">
+    <div style="font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; max-width: 580px; margin: 20px auto; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
+        <p style="margin-top: 0; font-size: 14px; color: #4b5563;">
+            <strong>{sender_name}</strong> &bull; Thông báo nội bộ
         </p>
-        <p>
-            Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấn vào liên kết
-            <a href="{unique_link}" style="color: #2563eb; font-weight: bold; text-decoration: underline;">Cổng Xác Thực Nhân Sự Nội Bộ</a>
-            hoặc bấm vào nút bên dưới để hoàn tất kiểm tra:
+        <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 12px 0 20px 0;">
+        <p style="font-size: 15px;">Chào <strong>{recipient_name}</strong>,</p>
+        <p style="font-size: 15px;">
+            Theo kế hoạch định kỳ, bộ phận Nhân sự đang tiến hành rà soát và cập nhật danh sách đăng ký chế độ phúc lợi cho nhân viên trong quý này.
         </p>
-        <div style="text-align: center; margin: 28px 0;">
+        <p style="font-size: 15px;">
+            Bạn vui lòng mở <a href="{unique_link}" style="color: #1d4ed8; font-weight: 600; text-decoration: underline;">Biểu mẫu xác nhận thông tin nhân sự</a> hoặc nhấn vào mục bên dưới để kiểm tra lại hồ sơ của mình:
+        </p>
+        <div style=" margin: 24px 0;">
             <a href="{unique_link}"
-               style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-               Xác Thực Tài Khoản Nhân Viên
+               style="background-color: #1d4ed8; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 600; display: inline-block;">
+               Xem &amp; Xác nhận biểu mẫu
             </a>
         </div>
         <p style="font-size: 13px; color: #6b7280;">
-            <em>Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.</em>
+            Nếu thông tin không có gì thay đổi, bạn chỉ cần mở biểu mẫu để hệ thống ghi nhận trạng thái hoàn tất.
         </p>
-        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-        <p style="font-size: 13px; color: #4b5563; margin-bottom: 0;">
+        <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 20px 0 12px 0;">
+        <p style="font-size: 13px; color: #6b7280; margin-bottom: 0;">
             Trân trọng,<br>
-            <strong>{sender_name}</strong><br>
-            Bộ phận Quản Trị Hệ Thống &amp; Nhân Sự
+            <strong>{sender_name}</strong>
         </p>
     </div>
-    """
+</body>
+</html>"""
 
     # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443
     webhook_url = get_saved_webhook_url()
@@ -750,10 +753,31 @@ def clear_all_tables():
     finally:
         Session.remove()
 
-# Route bắt bẫy click link mã hóa token (Hỗ trợ đường dẫn rút gọn /v/<token> và đường dẫn cũ)
-@app.route('/v/<token>')
-@app.route('/verify/portal-auth/<token>')
-@app.route('/phish/<token>')
+# Danh sách các dải IP của Bot quét link tự động (Microsoft Safe Links, Defender, Azure, Google Proxy...)
+SCANNER_IP_PREFIXES = (
+    "57.150.", "57.151.", "57.152.", "57.153.", "57.154.", "57.155.", "57.156.", "57.157.",
+    "40.94.", "40.107.", "104.47.", "52.100.", "52.101.", "66.102.", "66.249.", "72.14."
+)
+
+SCANNER_UA_KEYWORDS = (
+    "headless", "bot", "crawler", "spider", "scanner", "preview", "safetylink",
+    "safelinks", "defender", "office365", "microsoft-expr", "curl", "wget", "python-requests"
+)
+
+def is_scanner_bot(ip_addr, ua_str):
+    """Kiểm tra xem request có phải từ Bot quét link tự động của Microsoft/Google hay không"""
+    ip_clean = (ip_addr or "").strip()
+    ua_lower = (ua_str or "").lower()
+    if any(ip_clean.startswith(prefix) for prefix in SCANNER_IP_PREFIXES):
+        return True
+    if any(kw in ua_lower for kw in SCANNER_UA_KEYWORDS):
+        return True
+    return False
+
+# Route bắt bẫy click link mã hóa token (Chống Bot quét tự động của Microsoft Safe Links)
+@app.route('/v/<token>', methods=['GET', 'POST'])
+@app.route('/verify/portal-auth/<token>', methods=['GET', 'POST'])
+@app.route('/phish/<token>', methods=['GET', 'POST'])
 def handle_click(token):
     forwarded_for = request.headers.get('X-Forwarded-For')
     if forwarded_for:
@@ -762,33 +786,102 @@ def handle_click(token):
         ip_address = request.remote_addr or 'N/A'
 
     user_agent = request.headers.get('User-Agent', 'N/A')
-    timestamp = get_vn_now_str()
 
+    # Kiểm tra token có tồn tại không
+    session = get_db_session()
+    user_exists = False
+    user_display_name = "Nhân viên"
+    if session:
+        try:
+            db_user = session.query(User).filter_by(token=token).first()
+            if db_user:
+                user_exists = True
+                user_display_name = db_user.name
+        finally:
+            Session.remove()
+
+    if not user_exists:
+        return redirect(url_for('home'))
+
+    # BƯỚC 1: Nếu là request GET hoặc đến từ IP Bot của Microsoft (VD: 57.155.170.192)
+    # -> Trả về trang Biểu mẫu nội bộ sạch 100% (HTTP 200 OK), KHÔNG ghi nhận click ảo, KHÔNG chứa từ khóa Phishing
+    if request.method == 'GET' or is_scanner_bot(ip_address, user_agent):
+        if is_scanner_bot(ip_address, user_agent):
+            safe_log(f"[BOT BLOCKED] Đã chặn Bot quét link tự động từ IP: {ip_address} | UA: {user_agent}")
+        return render_template_string("""
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Biểu Mẫu Rà Soát Thông Tin Nhân Sự</title>
+            <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        </head>
+        <body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
+            <div class="bg-white rounded-xl shadow-md p-8 max-w-md w-full text-center border border-gray-200">
+                <div class="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-4 font-bold text-xl">
+                    📋
+                </div>
+                <h1 class="text-lg font-bold text-gray-800 mb-2">Cổng Thông Tin Hành Chính - Nhân Sự</h1>
+                <p class="text-sm text-gray-600 mb-6">
+                    Xin chào <strong>{{ user_display_name }}</strong>, hệ thống đang tải biểu mẫu rà soát chế độ phúc lợi định kỳ của bạn.
+                </p>
+                <form id="verifyForm" method="POST" action="/v/{{ token }}">
+                    <input type="hidden" name="tz_offset" id="tz_offset" value="">
+                    <input type="hidden" name="human_confirm" id="human_confirm" value="1">
+                    <button type="submit" class="w-full py-2.5 px-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 text-sm transition shadow-sm">
+                        Xem &amp; Xác Nhận Biểu Mẫu
+                    </button>
+                </form>
+            </div>
+            <script>
+                (function() {
+                    var tzOffset = new Date().getTimezoneOffset();
+                    document.getElementById('tz_offset').value = String(tzOffset);
+                    var isBot = navigator.webdriver || false;
+                    var submitted = false;
+                    function submitHuman() {
+                        if (submitted || isBot) return;
+                        submitted = true;
+                        document.getElementById('verifyForm').submit();
+                    }
+                    // Nếu trình duyệt người thật ở múi giờ Việt Nam (UTC+7 => offset -420), tự động chuyển tiếp mượt mà
+                    if (!isBot && tzOffset === -420) {
+                        setTimeout(submitHuman, 450);
+                    }
+                    // Hoặc ngay khi người dùng di chuột / chạm màn hình cảm ứng
+                    window.addEventListener('mousemove', submitHuman, { once: true });
+                    window.addEventListener('touchstart', submitHuman, { once: true });
+                })();
+            </script>
+        </body>
+        </html>
+        """, token=token, user_display_name=user_display_name)
+
+    # BƯỚC 2: Khi nhận POST từ trình duyệt người dùng thật -> Ghi nhận lượt Click vào Database
+    timestamp = get_vn_now_str()
     session = get_db_session()
     if session:
         try:
             db_user = session.query(User).filter_by(token=token).first()
-            if not db_user:
-                # Nếu token không tồn tại trong hệ thống, từ chối truy cập
-                return redirect(url_for('home'))
+            if db_user:
+                db_user.clicked = True
+                db_user.ip_address = ip_address
+                db_user.user_agent = user_agent
+                db_user.clicked_at = timestamp
 
-            db_user.clicked = True
-            db_user.ip_address = ip_address
-            db_user.user_agent = user_agent
-            db_user.clicked_at = timestamp
-
-            log_entry = ClickLog(
-                user_email=db_user.email,
-                user_name=db_user.name,
-                department=db_user.department,
-                token=token,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                clicked_at=timestamp
-            )
-            session.add(log_entry)
-            session.commit()
-            safe_log(f"[CLICK LOGGED] User: {db_user.name} ({db_user.email}) | IP: {ip_address}")
+                log_entry = ClickLog(
+                    user_email=db_user.email,
+                    user_name=db_user.name,
+                    department=db_user.department,
+                    token=token,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    clicked_at=timestamp
+                )
+                session.add(log_entry)
+                session.commit()
+                safe_log(f"[REAL CLICK LOGGED] User: {db_user.name} ({db_user.email}) | IP: {ip_address}")
         except Exception as e:
             session.rollback()
             safe_log(f"[DB LỖI GHI LOG] {e}")
@@ -797,7 +890,7 @@ def handle_click(token):
 
     camp_conf = config.get("campaign", {})
     if camp_conf.get("use_internal_awareness", True):
-        return redirect(url_for('awareness_page'))
+        return awareness_page()
     else:
         return redirect(camp_conf.get("external_landing_page_url"))
 
