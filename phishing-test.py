@@ -587,6 +587,66 @@ def add_user():
     finally:
         Session.remove()
 
+@app.route('/users/import-bulk', methods=['POST'])
+@admin_required
+def import_bulk_users():
+    """Thêm hàng loạt các User đã được chọn từ bảng xem trước CSV vào Database"""
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+
+    users_json = request.form.get('users_json', '[]')
+    try:
+        items = json.loads(users_json)
+        if not isinstance(items, list) or len(items) == 0:
+            return redirect(url_for('dashboard', msg="Chưa có user nào được chọn để thêm!", status="error"))
+
+        existing_users = session.query(User).all()
+        existing_map = {u.email.lower(): u for u in existing_users}
+
+        added_count = 0
+        updated_count = 0
+        seen_emails = set()
+
+        for item in items:
+            email = (item.get('email') or '').strip().lower()
+            name = (item.get('name') or '').strip() or 'Nhân viên'
+            department = (item.get('department') or '').strip() or 'Chưa phân loại'
+
+            if not email or '@' not in email or email in seen_emails:
+                continue
+            seen_emails.add(email)
+
+            if email in existing_map:
+                existing_u = existing_map[email]
+                existing_u.name = name
+                existing_u.department = department
+                updated_count += 1
+            else:
+                token = uuid.uuid4().hex[:8]
+                new_user = User(
+                    email=email,
+                    name=name,
+                    department=department,
+                    token=token,
+                    clicked=False,
+                    ip_address='N/A',
+                    user_agent='N/A',
+                    clicked_at='N/A',
+                    last_sent_at='Chưa gửi'
+                )
+                session.add(new_user)
+                added_count += 1
+
+        session.commit()
+        msg = f"Đã nhập từ file CSV thành công: Thêm mới {added_count} user, Cập nhật {updated_count} user!"
+        return redirect(url_for('dashboard', msg=msg, status="success"))
+    except Exception as e:
+        session.rollback()
+        return redirect(url_for('dashboard', msg=f"Lỗi khi nhập danh sách CSV: {e}", status="error"))
+    finally:
+        Session.remove()
+
 @app.route('/users/delete/<int:user_id>', methods=['POST'])
 @admin_required
 def delete_user(user_id):
@@ -1177,31 +1237,102 @@ def dashboard():
                 </div>
             </div>
 
-            <!-- Form thêm User trực tiếp vào Database -->
-            <div class="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200">
-                <h2 class="text-sm sm:text-base font-bold text-gray-800 mb-3">➕ Thêm User Mục Tiêu Mới</h2>
-                <form action="/users/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Họ và Tên *</label>
-                        <input type="text" name="name" required placeholder="VD: Nguyễn Văn A"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <!-- Form thêm User trực tiếp vào Database & Nhập từ File CSV -->
+            <div class="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 space-y-5">
+                <div>
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+                        <h2 class="text-sm sm:text-base font-bold text-gray-800">➕ Thêm User Mục Tiêu Mới</h2>
+                        <!-- Nút chọn file CSV tải lên -->
+                        <label class="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs sm:text-sm font-semibold cursor-pointer transition shadow-sm">
+                            <span>📂</span>
+                            <span>Tải Lên File CSV (userAccount.csv)</span>
+                            <input type="file" id="csvFileInput" accept=".csv,text/csv" class="hidden" onchange="handleCsvFile(this)">
+                        </label>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Địa chỉ Email *</label>
-                        <input type="email" name="email" required placeholder="VD: nguyenvana@gmail.com"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+
+                    <form action="/users/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Họ và Tên *</label>
+                            <input type="text" name="name" required placeholder="VD: Nguyễn Văn A"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Địa chỉ Email *</label>
+                            <input type="email" name="email" required placeholder="VD: nguyenvana@gmail.com"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Phòng Ban</label>
+                            <input type="text" name="department" placeholder="VD: CNTT / Kế Toán"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <button type="submit" class="w-full py-2.5 sm:py-2 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 active:bg-green-800 text-sm transition shadow-sm">
+                                ➕ Lưu Vào DB
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- KHUNG XEM TRƯỚC & CHỌN USER TỪ FILE CSV (Tự động hiện ngay khi chọn file CSV) -->
+                <div id="csvPreviewSection" class="hidden border-t border-gray-200 pt-4 space-y-3">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-indigo-50 p-3.5 rounded-xl border border-indigo-200">
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-sm font-bold text-indigo-900" id="csvFileNameTitle">📄 Đã quét file CSV</span>
+                                <span id="csvStatsBadge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-300"></span>
+                            </div>
+                            <p class="text-xs text-indigo-700 mt-1">
+                                Cột ánh xạ: <code>Display name</code> ➔ Tên | <code>User principal name</code> ➔ Email | <code>Department</code> ➔ Phòng ban. Mặc định đã tick chọn toàn bộ email đúng định dạng.
+                            </p>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button" onclick="toggleAllCsvValid(true)" class="px-2.5 py-1.5 bg-white hover:bg-gray-100 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-semibold transition">
+                                ☑️ Tick hết mail hợp lệ
+                            </button>
+                            <button type="button" onclick="toggleAllCsvValid(false)" class="px-2.5 py-1.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded-lg text-xs font-semibold transition">
+                                ⬜ Bỏ tick tất cả
+                            </button>
+                            <button type="button" onclick="closeCsvPreview()" class="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-semibold transition">
+                                ✖ Đóng
+                            </button>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Phòng Ban</label>
-                        <input type="text" name="department" placeholder="VD: CNTT / Kế Toán"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+
+                    <!-- Thanh tìm kiếm nhanh trong danh sách CSV & Nút Thêm Tất Cả Đã Chọn -->
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                        <input type="text" id="csvSearchInput" oninput="filterCsvTable()" placeholder="🔍 Tìm nhanh theo tên, email hoặc phòng ban để lọc/bỏ tick..."
+                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+
+                        <form id="csvBulkForm" action="/users/import-bulk" method="POST" onsubmit="return submitSelectedCsvUsers();">
+                            <input type="hidden" name="users_json" id="csvUsersJsonInput" value="[]">
+                            <button type="submit" id="csvSubmitBtn" class="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold rounded-lg text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-1.5">
+                                <span>➕</span>
+                                <span id="csvSubmitBtnText">Thêm Các User Đã Chọn (0)</span>
+                            </button>
+                        </form>
                     </div>
-                    <div>
-                        <button type="submit" class="w-full py-2.5 sm:py-2 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 active:bg-green-800 text-sm transition shadow-sm">
-                            ➕ Lưu Vào DB
-                        </button>
+
+                    <!-- Bảng danh sách User quét được từ CSV -->
+                    <div class="border border-gray-200 rounded-xl overflow-hidden">
+                        <div class="max-h-80 overflow-y-auto">
+                            <table class="min-w-full divide-y divide-gray-200 text-xs sm:text-sm">
+                                <thead class="bg-gray-100 text-gray-600 uppercase font-semibold sticky top-0 z-10">
+                                    <tr>
+                                        <th class="py-2.5 px-3 text-center w-10">Chọn</th>
+                                        <th class="py-2.5 px-3 text-left">Họ và Tên (Display name)</th>
+                                        <th class="py-2.5 px-3 text-left">Email (User principal name)</th>
+                                        <th class="py-2.5 px-3 text-left">Phòng Ban (Department)</th>
+                                        <th class="py-2.5 px-3 text-left">Định Dạng</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="csvPreviewTbody" class="divide-y divide-gray-100 bg-white">
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </form>
+                </div>
             </div>
 
             <!-- BẢNG 1: DANH SÁCH MỤC TIÊU (Tự động chuyển đổi Thẻ trên Mobile & Bảng trên Desktop) -->
@@ -1453,6 +1584,220 @@ def dashboard():
                 setTimeout(function() {
                     toast.classList.add('hidden');
                 }, 2200);
+            }
+
+            // --- XỬ LÝ QUÉT & XEM TRƯỚC FILE CSV (userAccount.csv) ---
+            var scannedCsvUsers = [];
+
+            function parseCsvRow(line) {
+                var result = [];
+                var cur = '';
+                var inQuotes = false;
+                for (var i = 0; i < line.length; i++) {
+                    var ch = line[i];
+                    if (ch === '"') {
+                        if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+                            cur += '"';
+                            i++;
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (ch === ',' && !inQuotes) {
+                        result.push(cur.trim());
+                        cur = '';
+                    } else {
+                        cur += ch;
+                    }
+                }
+                result.push(cur.trim());
+                return result;
+            }
+
+            function isValidEmailFormat(email) {
+                if (!email) return false;
+                // Loại bỏ các tài khoản Guest chứa #EXT# hoặc sai cấu trúc email chuẩn
+                if (email.indexOf('#') !== -1 || email.indexOf(' ') !== -1) return false;
+                var re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$/;
+                return re.test(email);
+            }
+
+            function escapeHtml(str) {
+                return String(str || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+
+            function handleCsvFile(input) {
+                if (!input.files || !input.files[0]) return;
+                var file = input.files[0];
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var content = e.target.result || '';
+                    // Xóa BOM UTF-8 nếu có
+                    if (content.charCodeAt(0) === 0xFEFF) {
+                        content = content.slice(1);
+                    }
+                    var lines = content.split(/\\r?\\n/).filter(function(l) { return l.trim().length > 0; });
+                    if (lines.length < 2) {
+                        alert('File CSV trống hoặc không có dữ liệu!');
+                        return;
+                    }
+
+                    var headers = parseCsvRow(lines[0]).map(function(h) { return h.toLowerCase().trim(); });
+                    var idxEmail = headers.indexOf('user principal name');
+                    if (idxEmail === -1) idxEmail = headers.indexOf('email');
+
+                    var idxName = headers.indexOf('display name');
+                    if (idxName === -1) idxName = headers.indexOf('name');
+
+                    var idxDept = headers.indexOf('department');
+
+                    if (idxEmail === -1) {
+                        alert('Không tìm thấy cột "User principal name" (hoặc "Email") trong file CSV!');
+                        return;
+                    }
+
+                    scannedCsvUsers = [];
+                    var seenInCsv = {};
+
+                    for (var i = 1; i < lines.length; i++) {
+                        var cols = parseCsvRow(lines[i]);
+                        if (cols.length <= idxEmail) continue;
+
+                        var rawEmail = (cols[idxEmail] || '').trim().toLowerCase();
+                        var rawName = (idxName !== -1 && cols[idxName]) ? cols[idxName].trim() : 'Nhân viên';
+                        var rawDept = (idxDept !== -1 && cols[idxDept]) ? cols[idxDept].trim() : 'Chưa phân loại';
+
+                        if (!rawEmail && !rawName) continue;
+                        if (rawEmail && seenInCsv[rawEmail]) continue;
+                        if (rawEmail) seenInCsv[rawEmail] = true;
+
+                        var valid = isValidEmailFormat(rawEmail);
+                        scannedCsvUsers.push({
+                            index: scannedCsvUsers.length,
+                            name: rawName || 'Nhân viên',
+                            email: rawEmail,
+                            department: rawDept || 'Chưa phân loại',
+                            valid: valid,
+                            checked: valid // Mặc định tick hết tất cả các mail đúng định dạng
+                        });
+                    }
+
+                    document.getElementById('csvFileNameTitle').textContent = '📄 File: ' + file.name;
+                    document.getElementById('csvSearchInput').value = '';
+                    document.getElementById('csvPreviewSection').classList.remove('hidden');
+                    renderCsvTable();
+                };
+                reader.readAsText(file, 'UTF-8');
+            }
+
+            function renderCsvTable() {
+                var tbody = document.getElementById('csvPreviewTbody');
+                var kw = (document.getElementById('csvSearchInput').value || '').toLowerCase().trim();
+                var html = '';
+
+                for (var i = 0; i < scannedCsvUsers.length; i++) {
+                    var u = scannedCsvUsers[i];
+                    if (kw) {
+                        var match = u.name.toLowerCase().indexOf(kw) !== -1 ||
+                                    u.email.toLowerCase().indexOf(kw) !== -1 ||
+                                    u.department.toLowerCase().indexOf(kw) !== -1;
+                        if (!match) continue;
+                    }
+
+                    var rowBg = u.valid ? 'hover:bg-indigo-50 cursor-pointer' : 'bg-red-50 opacity-75';
+                    var badge = u.valid
+                        ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">✅ Hợp lệ</span>'
+                        : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">⚠️ Sai định dạng</span>';
+
+                    html += '<tr class="' + rowBg + ' transition" onclick="toggleCsvRow(' + u.index + ', event)">' +
+                        '<td class="py-2.5 px-3 text-center">' +
+                            '<input type="checkbox" class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" ' +
+                            (u.checked ? 'checked ' : '') +
+                            'onclick="event.stopPropagation(); onCsvCheckboxChange(' + u.index + ', this.checked)">' +
+                        '</td>' +
+                        '<td class="py-2.5 px-3 font-medium text-gray-900">' + escapeHtml(u.name) + '</td>' +
+                        '<td class="py-2.5 px-3 font-mono text-xs text-gray-700">' + escapeHtml(u.email) + '</td>' +
+                        '<td class="py-2.5 px-3 text-gray-600">' + escapeHtml(u.department) + '</td>' +
+                        '<td class="py-2.5 px-3 whitespace-nowrap">' + badge + '</td>' +
+                    '</tr>';
+                }
+
+                if (!html) {
+                    html = '<tr><td colspan="5" class="py-6 text-center text-gray-500 text-xs">Không tìm thấy user nào khớp từ khóa lọc.</td></tr>';
+                }
+
+                tbody.innerHTML = html;
+                updateCsvCounts();
+            }
+
+            function toggleCsvRow(idx, evt) {
+                var item = scannedCsvUsers[idx];
+                if (!item) return;
+                item.checked = !item.checked;
+                renderCsvTable();
+            }
+
+            function onCsvCheckboxChange(idx, isChecked) {
+                var item = scannedCsvUsers[idx];
+                if (!item) return;
+                item.checked = isChecked;
+                updateCsvCounts();
+            }
+
+            function toggleAllCsvValid(checkValid) {
+                for (var i = 0; i < scannedCsvUsers.length; i++) {
+                    scannedCsvUsers[i].checked = checkValid ? scannedCsvUsers[i].valid : false;
+                }
+                renderCsvTable();
+            }
+
+            function filterCsvTable() {
+                renderCsvTable();
+            }
+
+            function updateCsvCounts() {
+                var total = scannedCsvUsers.length;
+                var validCount = 0;
+                var selectedCount = 0;
+                for (var i = 0; i < scannedCsvUsers.length; i++) {
+                    if (scannedCsvUsers[i].valid) validCount++;
+                    if (scannedCsvUsers[i].checked) selectedCount++;
+                }
+                document.getElementById('csvStatsBadge').textContent =
+                    'Tổng quét: ' + total + ' | Hợp lệ: ' + validCount + ' | Đang chọn: ' + selectedCount;
+                document.getElementById('csvSubmitBtnText').textContent =
+                    'Thêm Các User Đã Chọn (' + selectedCount + ')';
+            }
+
+            function closeCsvPreview() {
+                scannedCsvUsers = [];
+                document.getElementById('csvFileInput').value = '';
+                document.getElementById('csvPreviewSection').classList.add('hidden');
+            }
+
+            function submitSelectedCsvUsers() {
+                var selected = [];
+                for (var i = 0; i < scannedCsvUsers.length; i++) {
+                    if (scannedCsvUsers[i].checked && scannedCsvUsers[i].email) {
+                        selected.push({
+                            name: scannedCsvUsers[i].name,
+                            email: scannedCsvUsers[i].email,
+                            department: scannedCsvUsers[i].department
+                        });
+                    }
+                }
+                if (selected.length === 0) {
+                    alert('Vui lòng tick chọn ít nhất 1 user để thêm vào Database!');
+                    return false;
+                }
+                document.getElementById('csvUsersJsonInput').value = JSON.stringify(selected);
+                var btn = document.getElementById('csvSubmitBtn');
+                btn.disabled = true;
+                document.getElementById('csvSubmitBtnText').textContent = 'Đang lưu ' + selected.length + ' user...';
+                return true;
             }
         </script>
     </body>

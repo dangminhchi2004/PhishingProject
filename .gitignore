@@ -7,4 +7,6 @@ venv/
 env/
 .vscode/
 .idea/
+*.csv
+
 
