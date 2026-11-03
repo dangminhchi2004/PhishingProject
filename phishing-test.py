@@ -58,9 +58,9 @@ def load_config():
             "tracking_path": "/v",
             "use_internal_awareness": True,
             "external_landing_page_url": "https://sites.google.com/view/chopda-enterprise-test/home",
-            "email_subject": "Kế hoạch rà soát và đăng ký chế độ phúc lợi định kỳ",
-            "sender_display_name": "Ban Hành Chính - Nhân Sự",
-            "sender_email": "hr-office@internal-portal.com"
+            "email_subject": "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên",
+            "sender_display_name": "Cổng Thông Tin Nhân Sự",
+            "sender_email": "security-alert@internal-portal.com"
         },
         "smtp": {
             "enabled": True,
@@ -290,44 +290,70 @@ def get_saved_webhook_url():
     """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
     return get_saved_setting('webhook_url', config.get("smtp", {}).get("webhook_url", "").strip())
 
-# --- Hàm gửi email định dạng HTML tự nhiên như người thật gõ (Vượt bộ lọc Junk Mail của Outlook/M365) ---
+# --- Hàm gửi email định dạng HTML với Hyperlink ẩn đường dẫn ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
-    Gửi email HTML chuẩn cấu trúc thư cá nhân Gmail (<div dir="ltr">), chỉ dùng Hyperlink chữ tự nhiên,
-    không dùng khung CSS hay nút bấm màu mè để tránh bị Microsoft 365 đánh dấu Spam/Phishing Template.
+    Gửi email HTML sử dụng Hyperlink (ẩn hoàn toàn đường dẫn thô trong nội dung email).
+    Trả về tuple: (success: bool, message: str)
     """
     camp_conf = config.get("campaign", {})
     smtp_conf = config.get("smtp", {})
 
-    sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Phòng Hành Chính Nhân Sự"))
+    sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Cổng Thông Tin Nhân Sự"))
     if smtp_conf.get("enabled") and smtp_conf.get("username"):
         sender_email = smtp_conf.get("username")
     else:
-        sender_email = camp_conf.get("sender_email", "hr-office@internal-portal.com")
+        sender_email = camp_conf.get("sender_email", "security-alert@internal-portal.com")
 
-    subject = get_saved_setting("email_subject", camp_conf.get("email_subject", "V/v: Đối chiếu danh sách đăng ký chế độ nhân viên"))
+    subject = get_saved_setting("email_subject", camp_conf.get("email_subject", "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên"))
 
-    plain_body = f"""Chào {recipient_name},
+    # Nội dung văn bản thuần dự phòng (luôn kèm link rút gọn phòng trường hợp Apps Script chưa bật htmlBody)
+    plain_body = f"""Kính gửi {recipient_name},
 
-Mình gửi lại đường dẫn phiếu đối chiếu thông tin và danh sách đăng ký chế độ nhân viên đợt này.
-Bạn mở biểu mẫu kiểm tra lại thông tin cá nhân giúp bộ phận tổng hợp nhé:
+Hệ thống phát hiện tài khoản của bạn cần được cập nhật và xác thực thông tin quyền lợi nhân sự định kỳ.
+Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng truy cập Cổng Xác Thực Nhân Sự tại liên kết dưới đây:
+
 {unique_link}
 
-Nếu các mục đã khớp thì chỉ cần mở xác nhận trên phiếu là hoàn tất.
+Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
 
-Cảm ơn {recipient_name},
+Trân trọng,
 {sender_name}
+Bộ phận Quản Trị Hệ Thống & Nhân Sự
 """
 
-    # Cấu trúc HTML giống hệt 100% thư gõ tay từ Gmail (không dùng CSS button/box quảng cáo)
-    html_body = f"""<div dir="ltr" style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #222222; line-height: 1.6;">
-<p>Chào {recipient_name},</p>
-<p>Mình gửi thông tin đợt rà soát và cập nhật danh sách đăng ký chế độ phúc lợi nhân viên trong kỳ này.</p>
-<p>Nhờ {recipient_name} truy cập vào <a href="{unique_link}" target="_blank">Biểu mẫu đối chiếu thông tin nhân sự</a> để kiểm tra và xác nhận lại thông tin cá nhân giúp bộ phận tổng hợp nhé.</p>
-<p>Nếu thông tin trên phiếu không có gì thay đổi thì bạn chỉ cần mở xem để hệ thống ghi nhận hoàn tất.</p>
-<p>Cảm ơn bạn,<br>
-<strong>{sender_name}</strong></p>
-</div>"""
+    # Nội dung HTML chuyên nghiệp: Dùng Hyperlink và Nút bấm, KHÔNG hiển thị đường link thô
+    html_body = f"""
+    <div style="font-family: Arial, Helvetica, sans-serif; color: #222222; max-width: 600px; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
+        <h2 style="color: #1e40af; margin-top: 0; font-size: 18px; border-bottom: 2px solid #eff6ff; padding-bottom: 10px;">
+            {sender_name} - Thông Báo Xác Thực Định Kỳ
+        </h2>
+        <p>Kính gửi <strong>{recipient_name}</strong>,</p>
+        <p>
+            Hệ thống quản trị ghi nhận tài khoản nhân viên của bạn cần được đồng bộ và xác thực thông tin quyền lợi nhân sự định kỳ.
+        </p>
+        <p>
+            Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấn vào liên kết
+            <a href="{unique_link}" style="color: #2563eb; font-weight: bold; text-decoration: underline;">Cổng Xác Thực Nhân Sự Nội Bộ</a>
+            hoặc bấm vào nút bên dưới để hoàn tất kiểm tra:
+        </p>
+        <div style="text-align: center; margin: 28px 0;">
+            <a href="{unique_link}"
+               style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+               Xác Thực Tài Khoản Nhân Viên
+            </a>
+        </div>
+        <p style="font-size: 13px; color: #6b7280;">
+            <em>Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.</em>
+        </p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+        <p style="font-size: 13px; color: #4b5563; margin-bottom: 0;">
+            Trân trọng,<br>
+            <strong>{sender_name}</strong><br>
+            Bộ phận Quản Trị Hệ Thống &amp; Nhân Sự
+        </p>
+    </div>
+    """
 
     # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443
     webhook_url = get_saved_webhook_url()
