@@ -6,7 +6,7 @@
     "base_url": "http://127.0.0.1:5000"
   },
   "campaign": {
-    "tracking_path": "/verify/portal-auth",
+    "tracking_path": "/v",
     "use_internal_awareness": true,
     "external_landing_page_url": "https://sites.google.com/view/chopda-enterprise-test/home",
     "email_subject": "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên",
@@ -21,3 +21,4 @@
     "password": "your-app-password"
   }
 }
+

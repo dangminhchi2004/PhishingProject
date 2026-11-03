@@ -5,15 +5,18 @@ import uuid
 import base64
 import smtplib
 import urllib.request
+import urllib.error
 import datetime
+from functools import wraps
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr
-from flask import Flask, request, redirect, url_for, render_template_string
+from flask import Flask, request, redirect, url_for, render_template_string, session as flask_session
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 
-# Đảm bảo mã hóa UTF-8 trên Windows console để không bao giờ bị lỗi UnicodeEncodeError
+# Đảm bảo mã hóa UTF-8 trên Windows console
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -22,7 +25,7 @@ if sys.platform == "win32":
         pass
 
 def safe_log(msg):
-    """In log an toàn trên mọi môi trường (Windows, Linux, Gunicorn)"""
+    """In log an toàn trên mọi môi trường"""
     try:
         print(msg, flush=True)
     except Exception:
@@ -33,24 +36,26 @@ def safe_log(msg):
 
 # --- Khởi tạo ứng dụng Flask ---
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "phishing-sim-secret-key-2026-admin-lock")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
 
-# Cấu hình dự phòng được mã hóa Base64 để tránh lộ plain-text trên GitHub nhưng vẫn chạy ngay trên Render
+# Cấu hình dự phòng được mã hóa Base64
 _FALLBACK_DB = base64.b64decode("cG9zdGdyZXNxbDovL2F2bmFkbWluOkFWTlNfR3hNek5DUjJSMy1LTDlsVU1fa0BwaGlzaGluZ2RhdGFiYXNlLWRhbmdtaW5oY2hpMjAwNDE5MDYtbWVkY2FyZS5rLmFpdmVuY2xvdWQuY29tOjEzNjQ4L2RlZmF1bHRkYj9zc2xtb2RlPXJlcXVpcmU=").decode('utf-8')
 _FALLBACK_PW = base64.b64decode("Y2VmdmprdnBpeWFqb3NpcQ==").decode('utf-8')
 
 def load_config():
     default_config = {
         "database_url": _FALLBACK_DB,
+        "admin_password": os.environ.get("ADMIN_PASSWORD", "admin123"),
         "server": {
             "host": "0.0.0.0",
             "port": 5000,
             "base_url": ""
         },
         "campaign": {
-            "tracking_path": "/verify/portal-auth",
+            "tracking_path": "/v",
             "use_internal_awareness": True,
             "external_landing_page_url": "https://sites.google.com/view/chopda-enterprise-test/home",
             "email_subject": "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên",
@@ -78,6 +83,10 @@ def load_config():
         except Exception as e:
             safe_log(f"[!] Lỗi khi đọc config.json ({e}), dùng cấu hình mặc định.")
 
+    # Hỗ trợ rút gọn đường dẫn cũ /verify/portal-auth thành /v
+    if default_config['campaign'].get('tracking_path') == '/verify/portal-auth':
+        default_config['campaign']['tracking_path'] = '/v'
+
     # Ưu tiên biến môi trường khi triển khai trên Cloud (Render)
     if os.environ.get('DATABASE_URL'):
         default_config['database_url'] = os.environ.get('DATABASE_URL')
@@ -91,16 +100,14 @@ def load_config():
         default_config['smtp']['enabled'] = os.environ.get('SMTP_ENABLED').lower() in ('true', '1', 'yes')
     if os.environ.get('EMAIL_WEBHOOK_URL'):
         default_config['smtp']['webhook_url'] = os.environ.get('EMAIL_WEBHOOK_URL')
+    if os.environ.get('ADMIN_PASSWORD'):
+        default_config['admin_password'] = os.environ.get('ADMIN_PASSWORD')
 
     return default_config
 
 config = load_config()
 
 # --- Cấu hình Database SQLAlchemy (Aiven PostgreSQL) ---
-raw_db_url = config.get("database_url", "").strip()
-if raw_db_url.startswith("postgres://"):
-    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
-
 Base = declarative_base()
 
 class User(Base):
@@ -130,7 +137,7 @@ class ClickLog(Base):
     clicked_at = Column(String(100), default='N/A')
 
 class AppSetting(Base):
-    """Bảng lưu cấu hình hệ thống (như Webhook URL gửi mail qua HTTPS)"""
+    """Bảng lưu cấu hình hệ thống (Webhook URL, Mật khẩu Admin...)"""
     __tablename__ = 'app_settings'
     key = Column(String(100), primary_key=True)
     value = Column(Text, default='')
@@ -147,7 +154,6 @@ def ensure_pg_driver():
             return mod_name
         except ImportError:
             pass
-    # Tự động cài đặt nếu môi trường thiếu driver
     try:
         import subprocess
         safe_log("[AUTO-INSTALL] Đang tự động cài đặt driver PostgreSQL...")
@@ -178,7 +184,6 @@ def clean_db_url(url_str, driver="psycopg2"):
 def init_database():
     global engine, Session, last_db_error
     active_driver = ensure_pg_driver()
-    # Danh sách các URL ứng viên theo thứ tự ưu tiên (nếu biến môi trường bị sai cú pháp sẽ tự động dùng _FALLBACK_DB)
     candidates = []
     for raw in [os.environ.get('DATABASE_URL', ''), config.get("database_url", ""), _FALLBACK_DB]:
         cleaned = clean_db_url(raw, driver=active_driver)
@@ -193,18 +198,16 @@ def init_database():
                 pool_recycle=180,
                 connect_args={'connect_timeout': 10}
             )
-            # Kiểm tra kết nối thực tế
             with test_engine.connect() as conn:
                 pass
 
             engine = test_engine
             Session = scoped_session(sessionmaker(bind=engine))
 
-            # Tạo bảng trong khối try riêng để tránh xung đột khi nhiều worker Gunicorn khởi động cùng lúc
             try:
                 Base.metadata.create_all(engine)
             except Exception as table_err:
-                safe_log(f"[DB INFO] Bảng đã tồn tại hoặc đang được khởi tạo bởi worker khác: {table_err}")
+                safe_log(f"[DB INFO] Bảng đã tồn tại: {table_err}")
 
             last_db_error = ""
             safe_log("[DB OK] Đã kết nối Aiven PostgreSQL (bảng users & click_logs sẵn sàng)!")
@@ -228,16 +231,37 @@ def get_db_session():
 
 init_database()
 
+# --- Quản lý quyền Admin ---
+def get_admin_password():
+    """Lấy mật khẩu Admin từ Database hoặc cấu hình mặc định (admin123)"""
+    session = get_db_session()
+    if session:
+        try:
+            row = session.query(AppSetting).filter_by(key='admin_password').first()
+            if row and row.value and row.value.strip():
+                return row.value.strip()
+        except Exception:
+            session.rollback()
+        finally:
+            Session.remove()
+    return config.get("admin_password", "admin123")
+
+def admin_required(f):
+    """Decorator chặn người dùng thường truy cập vào trang quản trị"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not flask_session.get('is_admin'):
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 def get_active_base_url():
-    """Tự động lấy domain hiện tại (Render hoặc Local) để link trong email luôn truy cập được"""
+    """Tự động lấy domain hiện tại (Render hoặc Local)"""
     configured_url = config.get("server", {}).get("base_url", "").strip().rstrip("/")
-    # Nếu đang trong ngữ cảnh request web và base_url chưa cấu hình hoặc đang để 127.0.0.1 trên cloud
     try:
         if request and request.host_url:
             current_host = request.host_url.rstrip("/")
-            # Nếu truy cập qua domain thật (ví dụ .onrender.com), ưu tiên dùng domain thật đó
             if "127.0.0.1" not in current_host and "localhost" not in current_host:
-                # Trên Render dùng https
                 if current_host.startswith("http://") and ".onrender.com" in current_host:
                     current_host = current_host.replace("http://", "https://", 1)
                 return current_host
@@ -261,9 +285,10 @@ def get_saved_webhook_url():
             Session.remove()
     return config.get("smtp", {}).get("webhook_url", "").strip()
 
-# --- Hàm gửi email (Hỗ trợ cả Webhook HTTPS & SMTP có timeout chống treo) ---
+# --- Hàm gửi email định dạng HTML với Hyperlink ẩn đường dẫn ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
+    Gửi email HTML sử dụng Hyperlink (ẩn hoàn toàn đường dẫn thô trong nội dung email).
     Trả về tuple: (success: bool, message: str)
     """
     camp_conf = config.get("campaign", {})
@@ -277,28 +302,61 @@ def send_phishing_email(recipient_email, recipient_name, unique_link):
 
     subject = camp_conf.get("email_subject", "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên")
 
-    body = f"""Kính gửi {recipient_name},
+    # Nội dung văn bản thuần dự phòng
+    plain_body = f"""Kính gửi {recipient_name},
 
 Hệ thống phát hiện tài khoản của bạn cần được cập nhật và xác thực thông tin quyền lợi nhân sự định kỳ.
-Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấp vào liên kết xác thực an toàn dưới đây:
+Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng truy cập Cổng Xác Thực Nhân Sự để hoàn tất.
 
-{unique_link}
-
-Lưu ý: Liên kết có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
+Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
 
 Trân trọng,
 {sender_name}
 Bộ phận Quản Trị Hệ Thống & Nhân Sự
 """
 
-    # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443 (Không bị Render chặn)
+    # Nội dung HTML chuyên nghiệp: Dùng Hyperlink và Nút bấm, KHÔNG hiển thị đường link thô
+    html_body = f"""
+    <div style="font-family: Arial, Helvetica, sans-serif; color: #222222; max-width: 600px; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
+        <h2 style="color: #1e40af; margin-top: 0; font-size: 18px; border-bottom: 2px solid #eff6ff; padding-bottom: 10px;">
+            {sender_name} - Thông Báo Xác Thực Định Kỳ
+        </h2>
+        <p>Kính gửi <strong>{recipient_name}</strong>,</p>
+        <p>
+            Hệ thống quản trị ghi nhận tài khoản nhân viên của bạn cần được đồng bộ và xác thực thông tin quyền lợi nhân sự định kỳ.
+        </p>
+        <p>
+            Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấn vào liên kết
+            <a href="{unique_link}" style="color: #2563eb; font-weight: bold; text-decoration: underline;">Cổng Xác Thực Nhân Sự Nội Bộ</a>
+            hoặc bấm vào nút bên dưới để hoàn tất kiểm tra:
+        </p>
+        <div style="text-align: center; margin: 28px 0;">
+            <a href="{unique_link}"
+               style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+               Xác Thực Tài Khoản Nhân Viên
+            </a>
+        </div>
+        <p style="font-size: 13px; color: #6b7280;">
+            <em>Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.</em>
+        </p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+        <p style="font-size: 13px; color: #4b5563; margin-bottom: 0;">
+            Trân trọng,<br>
+            <strong>{sender_name}</strong><br>
+            Bộ phận Quản Trị Hệ Thống &amp; Nhân Sự
+        </p>
+    </div>
+    """
+
+    # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443
     webhook_url = get_saved_webhook_url()
     if webhook_url:
         try:
             payload = json.dumps({
                 "to": recipient_email,
                 "subject": subject,
-                "body": body,
+                "body": plain_body,
+                "htmlBody": html_body,
                 "sender_name": sender_name
             }).encode('utf-8')
             req = urllib.request.Request(
@@ -308,18 +366,17 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
             )
             try:
                 with urllib.request.urlopen(req, timeout=12) as resp:
-                    safe_log(f"[WEBHOOK OK] Đã gửi email qua HTTPS tới {recipient_email}")
-                    return True, f"Đã gửi email thành công tới {recipient_email} (qua HTTPS Gmail Webhook)!"
+                    safe_log(f"[WEBHOOK OK] Đã gửi email HTML qua HTTPS tới {recipient_email}")
+                    return True, f"Đã gửi email (kèm Hyperlink) thành công tới {recipient_email}!"
             except urllib.error.HTTPError as he:
-                # Google Apps Script thực thi doPost xong đôi khi trả 302/405 khi redirect sang googleusercontent
                 if he.code in (200, 302, 405):
-                    return True, f"Đã gửi email thành công tới {recipient_email} (qua HTTPS Gmail Webhook)!"
+                    return True, f"Đã gửi email (kèm Hyperlink) thành công tới {recipient_email}!"
                 raise he
         except Exception as e:
             safe_log(f"[WEBHOOK LỖI] {e}")
             return False, f"Lỗi Webhook HTTPS: {e}"
 
-    # 2. Gửi qua SMTP (Có timeout=8s để không bao giờ gây lỗi 500 Worker Timeout trên Gunicorn/Render)
+    # 2. Gửi qua SMTP (Hỗ trợ đầy đủ HTML + Hyperlink)
     if smtp_conf.get("enabled"):
         try:
             port = int(smtp_conf.get("port", 465))
@@ -327,10 +384,13 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
             username = smtp_conf.get("username", "").strip()
             password = smtp_conf.get("password", "").strip()
 
-            msg = MIMEText(body, 'plain', 'utf-8')
+            msg = MIMEMultipart('alternative')
             msg['Subject'] = Header(subject, 'utf-8')
             msg['From'] = formataddr((str(Header(sender_name, 'utf-8')), sender_email))
             msg['To'] = recipient_email
+
+            msg.attach(MIMEText(plain_body, 'plain', 'utf-8'))
+            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
             if port == 465:
                 with smtplib.SMTP_SSL(server_host, port, timeout=8) as server:
@@ -342,27 +402,114 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
                     server.login(username, password)
                     server.send_message(msg)
 
-            safe_log(f"[SMTP OK] Đã gửi email thực tế đến: {recipient_email}")
-            return True, f"Đã gửi email thành công đến {recipient_email}"
+            safe_log(f"[SMTP OK] Đã gửi email HTML đến: {recipient_email}")
+            return True, f"Đã gửi email (kèm Hyperlink) thành công đến {recipient_email}"
         except Exception as e:
             err_str = str(e)
             safe_log(f"[SMTP LỖI] Gửi đến {recipient_email} thất bại: {err_str}")
             if "timed out" in err_str.lower() or "101" in err_str or "110" in err_str or "network is unreachable" in err_str.lower():
-                return False, f"Kết nối SMTP tới {server_host}:{port} bị chặn (Gói Free của Render chặn cổng SMTP 465/587). Bạn có thể copy link bên dưới để gửi hoặc chạy lệnh gửi từ máy tính cá nhân!"
+                return False, f"Kết nối SMTP bị chặn trên Render Free. Hãy cấu hình Google Apps Script Webhook ở khung màu xanh bên dưới!"
             return False, f"Lỗi gửi SMTP tới {recipient_email}: {err_str}"
     else:
-        safe_log(f"[MÔ PHỎNG] Email tạo cho {recipient_email} -> Link: {unique_link}")
         return True, f"Đã tạo link mô phỏng cho {recipient_email}"
 
 # --- Flask Routes ---
 
 @app.route('/')
 def home():
-    return redirect(url_for('dashboard'))
+    """
+    Chặn toàn bộ User thường truy cập vào trang chủ (/).
+    Chỉ hiển thị thông báo cổng xác thực nội bộ, không lộ bất kỳ thông tin hay đường dẫn Admin nào.
+    """
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>403 Forbidden - Cổng Xác Thực Nội Bộ</title>
+        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border-t-4 border-gray-700">
+            <div class="text-5xl mb-4">🔒</div>
+            <h1 class="text-xl font-bold text-gray-800 mb-2">Truy Cập Trực Tiếp Bị Từ Chối (403)</h1>
+            <p class="text-sm text-gray-600 mb-6">
+                Hệ thống này chỉ tiếp nhận yêu cầu thông qua <strong>liên kết xác thực định danh</strong> được gửi trực tiếp trong email cá nhân của nhân viên.
+            </p>
+            <div class="text-xs text-gray-400 border-t border-gray-100 pt-4">
+                Internal Authentication Gateway &bull; Security Service
+            </div>
+        </div>
+    </body>
+    </html>
+    """), 403
+
+@app.route('/login', methods=['GET', 'POST'])
+@app.route('/admin', methods=['GET', 'POST'])
+def admin_login():
+    """Trang đăng nhập dành riêng cho Admin"""
+    if flask_session.get('is_admin'):
+        return redirect(url_for('dashboard'))
+
+    error_msg = ""
+    if request.method == 'POST':
+        entered_pw = request.form.get('password', '').strip()
+        if entered_pw == get_admin_password():
+            flask_session['is_admin'] = True
+            return redirect(url_for('dashboard'))
+        else:
+            error_msg = "Mật khẩu Quản trị viên không chính xác!"
+
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Đăng Nhập Quản Trị Viên</title>
+        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-900 flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full">
+            <div class="text-center mb-6">
+                <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-blue-100 text-blue-600 mb-3 font-bold text-xl">
+                    🛡️
+                </div>
+                <h1 class="text-2xl font-extrabold text-gray-900">Admin Portal</h1>
+                <p class="text-xs text-gray-500 mt-1">Chỉ Quản trị viên mới được phép truy cập Dashboard</p>
+            </div>
+
+            {% if error_msg %}
+            <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg text-center">
+                ⚠️ {{ error_msg }}
+            </div>
+            {% endif %}
+
+            <form method="POST" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 uppercase mb-1">Mật khẩu Admin</label>
+                    <input type="password" name="password" required autofocus placeholder="Nhập mật khẩu quản trị..."
+                        class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600">
+                </div>
+                <button type="submit" class="w-full py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition text-sm shadow">
+                    🔓 Đăng Nhập Quản Trị
+                </button>
+            </form>
+        </div>
+    </body>
+    </html>
+    """, error_msg=error_msg)
+
+@app.route('/logout', methods=['POST', 'GET'])
+def admin_logout():
+    flask_session.pop('is_admin', None)
+    return redirect(url_for('admin_login'))
 
 @app.route('/settings/webhook', methods=['POST'])
+@admin_required
 def save_webhook():
-    """Lưu Google Apps Script HTTPS Webhook URL vào bảng app_settings trên Aiven DB"""
+    """Lưu Google Apps Script HTTPS Webhook URL vào bảng app_settings"""
     session = get_db_session()
     if not session:
         return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
@@ -376,7 +523,7 @@ def save_webhook():
             session.add(AppSetting(key='webhook_url', value=webhook_url))
         session.commit()
         if webhook_url:
-            return redirect(url_for('dashboard', msg="Đã lưu HTTPS Gmail Webhook URL thành công! Giờ bạn có thể bấm Gửi Email ngay trên Render.", status="success"))
+            return redirect(url_for('dashboard', msg="Đã lưu HTTPS Gmail Webhook URL thành công!", status="success"))
         else:
             return redirect(url_for('dashboard', msg="Đã xóa cấu hình Webhook URL.", status="success"))
     except Exception as e:
@@ -385,9 +532,37 @@ def save_webhook():
     finally:
         Session.remove()
 
+@app.route('/settings/password', methods=['POST'])
+@admin_required
+def change_admin_password():
+    """Đổi mật khẩu Admin trực tiếp trên giao diện Web"""
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+
+    new_pw = request.form.get('new_password', '').strip()
+    if len(new_pw) < 4:
+        Session.remove()
+        return redirect(url_for('dashboard', msg="Mật khẩu mới phải có ít nhất 4 ký tự!", status="error"))
+
+    try:
+        row = session.query(AppSetting).filter_by(key='admin_password').first()
+        if row:
+            row.value = new_pw
+        else:
+            session.add(AppSetting(key='admin_password', value=new_pw))
+        session.commit()
+        return redirect(url_for('dashboard', msg="Đã cập nhật mật khẩu Admin mới thành công!", status="success"))
+    except Exception as e:
+        session.rollback()
+        return redirect(url_for('dashboard', msg=f"Lỗi đổi mật khẩu: {e}", status="error"))
+    finally:
+        Session.remove()
+
 @app.route('/users/add', methods=['POST'])
+@admin_required
 def add_user():
-    """Thêm User mới trực tiếp từ giao diện Web vào bảng users"""
+    """Thêm User mới trực tiếp từ giao diện Web vào bảng users (với token ngắn 8 ký tự)"""
     session = get_db_session()
     if not session:
         return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
@@ -408,7 +583,8 @@ def add_user():
             session.commit()
             msg = f"Đã cập nhật thông tin cho user: {name} ({email})"
         else:
-            token = uuid.uuid4().hex[:16]
+            # Token rút gọn 8 ký tự giúp URL cực kỳ ngắn gọn (/v/a1b2c3d4)
+            token = uuid.uuid4().hex[:8]
             new_user = User(
                 email=email,
                 name=name,
@@ -431,6 +607,7 @@ def add_user():
         Session.remove()
 
 @app.route('/users/delete/<int:user_id>', methods=['POST'])
+@admin_required
 def delete_user(user_id):
     """Xóa 1 user khỏi bảng users"""
     session = get_db_session()
@@ -452,6 +629,7 @@ def delete_user(user_id):
         Session.remove()
 
 @app.route('/users/send/<int:user_id>', methods=['POST'])
+@admin_required
 def send_single_user(user_id):
     """Gửi email cho 1 user cụ thể"""
     session = get_db_session()
@@ -459,8 +637,7 @@ def send_single_user(user_id):
         return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
     base_url = get_active_base_url()
-    tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
-    saved_webhook = get_saved_webhook_url()
+    tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
 
     try:
         u = session.query(User).filter_by(id=user_id).first()
@@ -483,6 +660,7 @@ def send_single_user(user_id):
 
 @app.route('/campaign/send-all', methods=['POST', 'GET'])
 @app.route('/reload', methods=['POST', 'GET'])
+@admin_required
 def send_all_users():
     """Gửi email chiến dịch cho toàn bộ user trong bảng users"""
     session = get_db_session()
@@ -490,8 +668,7 @@ def send_all_users():
         return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
     base_url = get_active_base_url()
-    tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
-    saved_webhook = get_saved_webhook_url()
+    tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
 
     try:
         users = session.query(User).all()
@@ -510,14 +687,13 @@ def send_all_users():
                 u.last_sent_at = now_str
             else:
                 last_err = detail_msg
-                # Nếu cổng SMTP bị chặn bởi tường lửa Cloud, dừng vòng lặp ngay để phản hồi nhanh
                 if "bị chặn" in detail_msg or "timed out" in detail_msg.lower():
                     break
 
         session.commit()
 
         if success_count == len(users):
-            return redirect(url_for('dashboard', msg=f"Đã gửi thành công {success_count}/{len(users)} email! (Domain link: {base_url})", status="success"))
+            return redirect(url_for('dashboard', msg=f"Đã gửi thành công {success_count}/{len(users)} email (ẩn link bằng Hyperlink)!", status="success"))
         elif success_count > 0:
             return redirect(url_for('dashboard', msg=f"Đã gửi {success_count}/{len(users)} email. Lỗi: {last_err}", status="error"))
         else:
@@ -529,6 +705,7 @@ def send_all_users():
         Session.remove()
 
 @app.route('/db/clear-clicks', methods=['POST'])
+@admin_required
 def clear_clicks():
     """Xóa sạch bảng click_logs và đặt lại trạng thái clicked=False cho toàn bộ bảng users"""
     session = get_db_session()
@@ -552,6 +729,7 @@ def clear_clicks():
         Session.remove()
 
 @app.route('/db/clear-all', methods=['POST'])
+@admin_required
 def clear_all_tables():
     """Xóa sạch dữ liệu trong cả 2 bảng: users và click_logs"""
     session = get_db_session()
@@ -569,7 +747,8 @@ def clear_all_tables():
     finally:
         Session.remove()
 
-# Route bắt bẫy click link mã hóa token
+# Route bắt bẫy click link mã hóa token (Hỗ trợ đường dẫn rút gọn /v/<token> và đường dẫn cũ)
+@app.route('/v/<token>')
 @app.route('/verify/portal-auth/<token>')
 @app.route('/phish/<token>')
 def handle_click(token):
@@ -586,24 +765,27 @@ def handle_click(token):
     if session:
         try:
             db_user = session.query(User).filter_by(token=token).first()
-            if db_user:
-                db_user.clicked = True
-                db_user.ip_address = ip_address
-                db_user.user_agent = user_agent
-                db_user.clicked_at = timestamp
+            if not db_user:
+                # Nếu token không tồn tại trong hệ thống, từ chối truy cập
+                return redirect(url_for('home'))
 
-                log_entry = ClickLog(
-                    user_email=db_user.email,
-                    user_name=db_user.name,
-                    department=db_user.department,
-                    token=token,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                    clicked_at=timestamp
-                )
-                session.add(log_entry)
-                session.commit()
-                safe_log(f"[CLICK LOGGED] User: {db_user.name} ({db_user.email}) | IP: {ip_address}")
+            db_user.clicked = True
+            db_user.ip_address = ip_address
+            db_user.user_agent = user_agent
+            db_user.clicked_at = timestamp
+
+            log_entry = ClickLog(
+                user_email=db_user.email,
+                user_name=db_user.name,
+                department=db_user.department,
+                token=token,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                clicked_at=timestamp
+            )
+            session.add(log_entry)
+            session.commit()
+            safe_log(f"[CLICK LOGGED] User: {db_user.name} ({db_user.email}) | IP: {ip_address}")
         except Exception as e:
             session.rollback()
             safe_log(f"[DB LỖI GHI LOG] {e}")
@@ -618,7 +800,10 @@ def handle_click(token):
 
 @app.route('/awareness')
 def awareness_page():
-    """Trang giáo dục nhận thức an toàn thông tin khi nhân viên nhấp vào link"""
+    """
+    Trang giáo dục nhận thức an toàn thông tin khi nhân viên nhấp vào link.
+    Tuyệt đối KHÔNG có nút dẫn về Trang chủ hay Dashboard của Admin.
+    """
     return render_template_string("""
     <!DOCTYPE html>
     <html lang="vi">
@@ -643,27 +828,28 @@ def awareness_page():
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6 text-left">
                 <h2 class="text-lg font-bold text-blue-900 mb-3">🔍 Các Dấu Hiệu Bạn Cần Cảnh Giác:</h2>
                 <ul class="space-y-2 text-sm text-gray-800 list-disc list-inside">
+                    <li><strong>Liên kết ẩn dưới chữ (Hyperlink):</strong> Kẻ tấn công thường ẩn đường dẫn giả mạo bên dưới các nút bấm hoặc dòng chữ như <em>"Xác thực tại đây"</em>. Hãy luôn rê chuột (hover) hoặc giữ vào liên kết để xem địa chỉ thực sự trước khi bấm.</li>
                     <li><strong>Áp lực khẩn cấp:</strong> Thư đe dọa tài khoản bị khóa trong 24h hoặc mất quyền lợi để bạn bấm vội.</li>
                     <li><strong>Kiểm tra người gửi:</strong> Tên hiển thị có thể là "Nhân Sự", nhưng hãy nhìn kỹ địa chỉ email thực tế.</li>
-                    <li><strong>Rê chuột (Hover) kiểm tra liên kết:</strong> Đường link thực sự có trỏ về đúng domain chính thức của công ty không?</li>
                     <li><strong>Xác minh kênh phụ:</strong> Khi nghi ngờ, hãy hỏi trực tiếp bộ phận IT/Nhân sự qua Zalo, Slack, Teams hoặc điện thoại nội bộ.</li>
                 </ul>
             </div>
 
             <p class="text-sm text-gray-500 mb-6">
-                Bảo mật thông tin bắt đầu từ sự cảnh giác của mỗi cá nhân. Cảm ơn sự hợp tác của bạn!
+                Bảo mật thông tin bắt đầu từ sự cảnh giác của mỗi cá nhân. Bạn có thể đóng tab trình duyệt này lại.
             </p>
-            <a href="/dashboard" class="inline-block px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition">
-                Xem Bảng Điều Khiển (Dashboard)
-            </a>
+            <button onclick="window.close();" class="inline-block px-6 py-2.5 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-800 transition">
+                Đã Hiểu &amp; Đóng Trang Này
+            </button>
         </div>
     </body>
     </html>
     """)
 
 @app.route('/dashboard')
+@admin_required
 def dashboard():
-    """Bảng điều khiển quản lý trực tiếp bảng Users và Click Logs trên giao diện Web"""
+    """Bảng điều khiển chỉ dành riêng cho Admin đã đăng nhập"""
     msg = request.args.get('msg', '')
     status = request.args.get('status', 'info')
 
@@ -713,7 +899,7 @@ def dashboard():
     click_rate = (clicked_users / total_users * 100) if total_users > 0 else 0
 
     base_url = get_active_base_url()
-    tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
+    tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
     saved_webhook = get_saved_webhook_url()
 
     html_content = """
@@ -722,7 +908,7 @@ def dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Quản Trị Chiến Dịch Phishing</title>
+        <title>Quản Trị Chiến Dịch Phishing (Admin Only)</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     </head>
     <body class="bg-gray-50 p-4 md:p-8">
@@ -736,9 +922,12 @@ def dashboard():
                         <span class="text-xs font-semibold text-green-700 bg-green-100 px-3 py-1 rounded-full border border-green-300">
                             ● Aiven PostgreSQL Connected
                         </span>
+                        <span class="text-xs font-semibold text-blue-700 bg-blue-100 px-3 py-1 rounded-full border border-blue-300">
+                            🛡️ Admin Mode
+                        </span>
                     </div>
                     <p class="text-sm text-gray-500 mt-1">
-                        Domain liên kết hiện tại: <code class="bg-gray-100 px-2 py-0.5 rounded text-blue-600 font-mono">{{ base_url }}</code>
+                        Domain liên kết rút gọn: <code class="bg-gray-100 px-2 py-0.5 rounded text-blue-600 font-mono">{{ base_url }}/{{ tracking_path }}/&lt;token&gt;</code>
                     </p>
                 </div>
 
@@ -760,6 +949,10 @@ def dashboard():
                             🔥 Clear Toàn Bộ DB
                         </button>
                     </form>
+
+                    <a href="/logout" class="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 font-semibold text-sm transition shadow">
+                        🔒 Đăng Xuất
+                    </a>
                 </div>
             </div>
 
@@ -793,29 +986,43 @@ def dashboard():
                 </div>
             </div>
 
-            <!-- Cấu hình Gửi Mail qua HTTPS (Google Apps Script) để vượt chặn cổng 465 trên Render Free -->
-            <div class="bg-blue-50 p-5 rounded-xl shadow-sm border border-blue-200">
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-3">
-                    <div>
-                        <h2 class="text-base font-bold text-blue-900">
-                            ⚡ Cấu Hình Gửi Mail HTTPS Từ Render (Miễn Phí 100% - Vượt Chặn Cổng SMTP 465/587)
-                        </h2>
-                        <p class="text-xs text-blue-700 mt-0.5">
-                            Gói Free của Render chặn cổng SMTP 465/587. Dán link <strong>Google Apps Script Web App</strong> vào đây để gửi mail trực tiếp qua cổng HTTPS (443):
-                        </p>
+            <!-- Cấu hình Webhook HTTPS & Đổi mật khẩu Admin -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="md:col-span-2 bg-blue-50 p-5 rounded-xl shadow-sm border border-blue-200">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-3">
+                        <div>
+                            <h2 class="text-sm font-bold text-blue-900">
+                                ⚡ Cấu Hình Gửi Mail HTTPS (Google Apps Script Webhook)
+                            </h2>
+                            <p class="text-xs text-blue-700 mt-0.5">
+                                Hỗ trợ gửi mail định dạng HTML &amp; Hyperlink trực tiếp từ Render:
+                            </p>
+                        </div>
+                        <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full {% if saved_webhook %}bg-green-100 text-green-800 border border-green-300{% else %}bg-yellow-100 text-yellow-800 border border-yellow-300{% endif %}">
+                            {% if saved_webhook %}✅ Đang bật HTTPS Webhook{% else %}⚠️ Chưa lưu Webhook{% endif %}
+                        </span>
                     </div>
-                    <span class="text-xs font-semibold px-2.5 py-1 rounded-full {% if saved_webhook %}bg-green-100 text-green-800 border border-green-300{% else %}bg-yellow-100 text-yellow-800 border border-yellow-300{% endif %}">
-                        {% if saved_webhook %}✅ Đang bật HTTPS Webhook{% else %}⚠️ Chưa cấu hình HTTPS Webhook{% endif %}
-                    </span>
+                    <form action="/settings/webhook" method="POST" class="flex gap-2">
+                        <input type="url" name="webhook_url" value="{{ saved_webhook }}"
+                            placeholder="Dán link https://script.google.com/macros/s/.../exec vào đây"
+                            class="flex-1 px-3 py-2 border border-blue-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button type="submit" class="px-4 py-2 bg-blue-700 text-white font-semibold rounded-lg hover:bg-blue-800 text-xs transition shadow whitespace-nowrap">
+                            💾 Lưu Webhook
+                        </button>
+                    </form>
                 </div>
-                <form action="/settings/webhook" method="POST" class="flex flex-col md:flex-row gap-3">
-                    <input type="url" name="webhook_url" value="{{ saved_webhook }}"
-                        placeholder="Dán link https://script.google.com/macros/s/.../exec vào đây"
-                        class="flex-1 px-3 py-2 border border-blue-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <button type="submit" class="px-5 py-2 bg-blue-700 text-white font-semibold rounded-lg hover:bg-blue-800 text-sm transition shadow whitespace-nowrap">
-                        💾 Lưu Webhook URL
-                    </button>
-                </form>
+
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <h2 class="text-sm font-bold text-gray-800 mb-1">🔑 Đổi Mật Khẩu Admin</h2>
+                    <p class="text-xs text-gray-500 mb-3">Bảo vệ trang Dashboard (Mặc định: <code>admin123</code>)</p>
+                    <form action="/settings/password" method="POST" class="flex gap-2">
+                        <input type="password" name="new_password" required placeholder="Mật khẩu mới..."
+                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button type="submit" class="px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 text-xs transition shadow whitespace-nowrap">
+                            Cập Nhật
+                        </button>
+                    </form>
+                </div>
             </div>
 
             <!-- Form thêm User trực tiếp vào Database -->
@@ -856,11 +1063,11 @@ def dashboard():
                         <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
                             <tr>
                                 <th class="py-3 px-4 text-left">ID</th>
-                                <th class="py-3 px-4 text-left">Họ Tên & Email</th>
+                                <th class="py-3 px-4 text-left">Họ Tên &amp; Email</th>
                                 <th class="py-3 px-4 text-left">Phòng Ban</th>
                                 <th class="py-3 px-4 text-left">Trạng Thái</th>
-                                <th class="py-3 px-4 text-left">IP & Thời Gian Click</th>
-                                <th class="py-3 px-4 text-left">Link Bẫy Mã Hóa</th>
+                                <th class="py-3 px-4 text-left">IP &amp; Thời Gian Click</th>
+                                <th class="py-3 px-4 text-left">Link Rút Gọn</th>
                                 <th class="py-3 px-4 text-right">Thao Tác</th>
                             </tr>
                         </thead>
@@ -893,12 +1100,12 @@ def dashboard():
                                     <td class="py-3 px-4">
                                         <div class="flex items-center gap-2">
                                             <a href="{{ base_url }}/{{ tracking_path }}/{{ u.token }}" target="_blank"
-                                                class="text-blue-600 hover:underline font-mono text-xs truncate max-w-xs"
+                                                class="text-blue-600 hover:underline font-mono text-xs"
                                                 title="{{ base_url }}/{{ tracking_path }}/{{ u.token }}">
-                                                .../{{ u.token }}
+                                                /{{ tracking_path }}/{{ u.token }}
                                             </a>
                                             <button type="button"
-                                                onclick="navigator.clipboard.writeText('{{ base_url }}/{{ tracking_path }}/{{ u.token }}'); alert('Đã copy link: {{ base_url }}/{{ tracking_path }}/{{ u.token }}');"
+                                                onclick="navigator.clipboard.writeText('{{ base_url }}/{{ tracking_path }}/{{ u.token }}'); alert('Đã copy link rút gọn: {{ base_url }}/{{ tracking_path }}/{{ u.token }}');"
                                                 class="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs border border-gray-300">
                                                 📋 Copy
                                             </button>
