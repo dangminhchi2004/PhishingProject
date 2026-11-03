@@ -982,19 +982,19 @@ def awareness_page():
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     </head>
     <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-        <div class="bg-white rounded-xl shadow-2xl p-8 max-w-2xl w-full text-center border-t-8 border-red-500">
+        <div id="awarenessCard" class="bg-white rounded-xl shadow-2xl p-6 sm:p-8 max-w-2xl w-full text-center border-t-8 border-red-500 transition-all">
             <div class="mb-4 inline-flex p-3 bg-red-100 rounded-full text-red-600">
                 <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                 </svg>
             </div>
-            <h1 class="text-3xl font-extrabold text-red-600 mb-3">Bạn Vừa Nhấp Vào Một Liên Kết Mô Phỏng Phishing!</h1>
-            <p class="text-gray-700 mb-6 text-base">
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-red-600 mb-3">Bạn Vừa Nhấp Vào Một Liên Kết Mô Phỏng Phishing!</h1>
+            <p class="text-gray-700 mb-6 text-sm sm:text-base">
                 Đừng quá lo lắng! Đây là một <strong>bài kiểm tra nhận thức an toàn định kỳ</strong> của tổ chức nhằm giúp bạn nâng cao kỹ năng phòng ngừa các cuộc tấn công mạng thực tế.
             </p>
 
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6 text-left">
-                <h2 class="text-lg font-bold text-blue-900 mb-3">🔍 Các Dấu Hiệu Bạn Cần Cảnh Giác:</h2>
+                <h2 class="text-base sm:text-lg font-bold text-blue-900 mb-3">🔍 Các Dấu Hiệu Bạn Cần Cảnh Giác:</h2>
                 <ul class="space-y-2 text-sm text-gray-800 list-disc list-inside">
                     <li><strong>Liên kết ẩn dưới chữ (Hyperlink):</strong> Kẻ tấn công thường ẩn đường dẫn giả mạo bên dưới các nút bấm hoặc dòng chữ như <em>"Xác thực tại đây"</em>. Hãy luôn rê chuột (hover) hoặc giữ vào liên kết để xem địa chỉ thực sự trước khi bấm.</li>
                     <li><strong>Áp lực khẩn cấp:</strong> Thư đe dọa tài khoản bị khóa trong 24h hoặc mất quyền lợi để bạn bấm vội.</li>
@@ -1004,12 +1004,36 @@ def awareness_page():
             </div>
 
             <p class="text-sm text-gray-500 mb-6">
-                Bảo mật thông tin bắt đầu từ sự cảnh giác của mỗi cá nhân. Bạn có thể đóng tab trình duyệt này lại.
+                Bảo mật thông tin bắt đầu từ sự cảnh giác của mỗi cá nhân.
             </p>
-            <button onclick="window.close();" class="inline-block px-6 py-2.5 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-800 transition">
-                Đã Hiểu &amp; Đóng Trang Này
+            <button type="button" onclick="closeAwarenessPage()" class="inline-block px-6 py-2.5 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 active:bg-black transition shadow-md cursor-pointer">
+                ✅ Đã Hiểu &amp; Đóng Trang Này
             </button>
         </div>
+
+        <script>
+            function closeAwarenessPage() {
+                // 1. Thử đóng tab trình duyệt trực tiếp
+                try {
+                    window.open('', '_self', '');
+                    window.close();
+                } catch (e) {}
+
+                // 2. Nếu trình duyệt chặn window.close() (do mở từ ứng dụng Mail hoặc qua bước chuyển tiếp POST),
+                // hiển thị thông báo hoàn tất và tự động thoát khỏi trang diễn tập
+                var card = document.getElementById('awarenessCard');
+                if (card) {
+                    card.className = 'bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border-t-8 border-green-500';
+                    card.innerHTML =
+                        '<div class="mb-4 inline-flex p-3 bg-green-100 rounded-full text-green-600 text-3xl">✅</div>' +
+                        '<h2 class="text-xl font-bold text-gray-800 mb-2">Đã Ghi Nhận Hoàn Tất!</h2>' +
+                        '<p class="text-sm text-gray-600 mb-4">Cảm ơn bạn đã hoàn thành nội dung nâng cao nhận thức an toàn thông tin. Đang đóng phiên làm việc...</p>';
+                }
+                setTimeout(function() {
+                    window.location.replace('https://www.google.com');
+                }, 800);
+            }
+        </script>
     </body>
     </html>
     """)
