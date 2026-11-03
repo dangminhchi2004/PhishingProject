@@ -231,6 +231,11 @@ def get_db_session():
 
 init_database()
 
+def get_vn_now_str():
+    """Lấy thời gian hiện tại theo múi giờ Việt Nam (UTC+7)"""
+    vn_tz = datetime.timezone(datetime.timedelta(hours=7))
+    return datetime.datetime.now(vn_tz).strftime("%Y-%m-%d %H:%M:%S")
+
 # --- Quản lý quyền Admin ---
 def get_admin_password():
     """Lấy mật khẩu Admin từ Database hoặc cấu hình mặc định (admin123)"""
@@ -242,8 +247,6 @@ def get_admin_password():
                 return row.value.strip()
         except Exception:
             session.rollback()
-        finally:
-            Session.remove()
     return config.get("admin_password", "admin123")
 
 def admin_required(f):
@@ -272,7 +275,7 @@ def get_active_base_url():
     return configured_url or "http://127.0.0.1:5000"
 
 def get_saved_webhook_url():
-    """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
+    """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình (Không đóng session đang mở của route)"""
     session = get_db_session()
     if session:
         try:
@@ -281,8 +284,6 @@ def get_saved_webhook_url():
                 return row.value.strip()
         except Exception:
             session.rollback()
-        finally:
-            Session.remove()
     return config.get("smtp", {}).get("webhook_url", "").strip()
 
 # --- Hàm gửi email định dạng HTML với Hyperlink ẩn đường dẫn ---
@@ -302,11 +303,13 @@ def send_phishing_email(recipient_email, recipient_name, unique_link):
 
     subject = camp_conf.get("email_subject", "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên")
 
-    # Nội dung văn bản thuần dự phòng
+    # Nội dung văn bản thuần dự phòng (luôn kèm link rút gọn phòng trường hợp Apps Script chưa bật htmlBody)
     plain_body = f"""Kính gửi {recipient_name},
 
 Hệ thống phát hiện tài khoản của bạn cần được cập nhật và xác thực thông tin quyền lợi nhân sự định kỳ.
-Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng truy cập Cổng Xác Thực Nhân Sự để hoàn tất.
+Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng truy cập Cổng Xác Thực Nhân Sự tại liên kết dưới đây:
+
+{unique_link}
 
 Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
 
@@ -647,7 +650,7 @@ def send_single_user(user_id):
         unique_link = f"{base_url}/{tracking_path}/{u.token}"
         ok, detail_msg = send_phishing_email(u.email, u.name, unique_link)
         if ok:
-            u.last_sent_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            u.last_sent_at = get_vn_now_str()
             session.commit()
             return redirect(url_for('dashboard', msg=detail_msg, status="success"))
         else:
@@ -677,7 +680,7 @@ def send_all_users():
 
         success_count = 0
         last_err = ""
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_vn_now_str()
 
         for u in users:
             unique_link = f"{base_url}/{tracking_path}/{u.token}"
@@ -759,7 +762,7 @@ def handle_click(token):
         ip_address = request.remote_addr or 'N/A'
 
     user_agent = request.headers.get('User-Agent', 'N/A')
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = get_vn_now_str()
 
     session = get_db_session()
     if session:
