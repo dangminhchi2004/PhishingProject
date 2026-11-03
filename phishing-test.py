@@ -435,7 +435,7 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
 def home():
     """
     Chặn toàn bộ User thường truy cập vào trang chủ (/).
-    Chỉ hiển thị thông báo cổng xác thực nội bộ, không lộ bất kỳ thông tin hay đường dẫn Admin nào.
+    Thiết kế theo phong cách Minimalism (NameThatUI): Tối giản, nhiều khoảng trắng, chữ sắc nét.
     """
     return render_template_string("""
     <!DOCTYPE html>
@@ -443,18 +443,24 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>403 Forbidden - Cổng Xác Thực Nội Bộ</title>
+        <title>403 — Truy Cập Bị Hạn Chế</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #FAFAFA; color: #111111; }
+            .font-mono-code { font-family: 'JetBrains Mono', monospace; }
+        </style>
     </head>
-    <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-        <div class="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border-t-4 border-gray-700">
-            <div class="text-5xl mb-4">🔒</div>
-            <h1 class="text-xl font-bold text-gray-800 mb-2">Truy Cập Trực Tiếp Bị Từ Chối (403)</h1>
-            <p class="text-sm text-gray-600 mb-6">
-                Hệ thống này chỉ tiếp nhận yêu cầu thông qua <strong>liên kết xác thực định danh</strong> được gửi trực tiếp trong email cá nhân của nhân viên.
+    <body class="flex items-center justify-center min-h-screen p-6">
+        <div class="bg-white border border-gray-200 rounded-md p-8 sm:p-10 max-w-md w-full">
+            <div class="font-mono-code text-xs uppercase tracking-widest text-gray-400 mb-3">HTTP 403 / FORBIDDEN</div>
+            <h1 class="text-xl font-semibold tracking-tight text-gray-900 mb-3">Truy cập trực tiếp bị từ chối</h1>
+            <p class="text-sm text-gray-500 leading-relaxed mb-8">
+                Hệ thống chỉ tiếp nhận yêu cầu thông qua liên kết xác thực định danh được gửi trực tiếp trong email cá nhân của nhân viên.
             </p>
-            <div class="text-xs text-gray-400 border-t border-gray-100 pt-4">
-                Internal Authentication Gateway &bull; Security Service
+            <div class="pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 font-mono-code">
+                <span>INTERNAL AUTH GATEWAY</span>
+                <span>RESTRICTED</span>
             </div>
         </div>
     </body>
@@ -464,7 +470,7 @@ def home():
 @app.route('/login', methods=['GET', 'POST'])
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_login():
-    """Trang đăng nhập dành riêng cho Admin"""
+    """Trang đăng nhập dành riêng cho Admin — Phong cách Minimalism"""
     if flask_session.get('is_admin'):
         return redirect(url_for('dashboard'))
 
@@ -475,7 +481,7 @@ def admin_login():
             flask_session['is_admin'] = True
             return redirect(url_for('dashboard'))
         else:
-            error_msg = "Mật khẩu Quản trị viên không chính xác!"
+            error_msg = "Mật khẩu quản trị không chính xác."
 
     return render_template_string("""
     <!DOCTYPE html>
@@ -483,33 +489,36 @@ def admin_login():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Đăng Nhập Quản Trị Viên</title>
+        <title>Đăng Nhập Quản Trị</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #FAFAFA; color: #111111; }
+            .btn-ink { background-color: #111111; color: #FFFFFF; }
+            .btn-ink:hover { background-color: #262626; }
+        </style>
     </head>
-    <body class="bg-gray-900 flex items-center justify-center min-h-screen p-4">
-        <div class="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full">
-            <div class="text-center mb-6">
-                <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-blue-100 text-blue-600 mb-3 font-bold text-xl">
-                    🛡️
-                </div>
-                <h1 class="text-2xl font-extrabold text-gray-900">Admin Portal</h1>
-                <p class="text-xs text-gray-500 mt-1">Chỉ Quản trị viên mới được phép truy cập Dashboard</p>
+    <body class="flex items-center justify-center min-h-screen p-6">
+        <div class="bg-white border border-gray-200 rounded-md p-8 sm:p-10 max-w-sm w-full">
+            <div class="mb-8">
+                <p class="text-xs uppercase tracking-widest text-gray-400 font-medium mb-1">Security Simulation</p>
+                <h1 class="text-xl font-semibold tracking-tight text-gray-900">Admin Console</h1>
             </div>
 
             {% if error_msg %}
-            <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg text-center">
-                ⚠️ {{ error_msg }}
+            <div class="mb-5 p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-medium rounded">
+                {{ error_msg }}
             </div>
             {% endif %}
 
-            <form method="POST" class="space-y-4">
+            <form method="POST" class="space-y-5">
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 uppercase mb-1">Mật khẩu Admin</label>
-                    <input type="password" name="password" required autofocus placeholder="Nhập mật khẩu quản trị..."
-                        class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600">
+                    <label class="block text-xs uppercase tracking-wider text-gray-500 font-medium mb-2">Mật khẩu</label>
+                    <input type="password" name="password" required autofocus placeholder="••••••••"
+                        class="w-full px-3.5 py-2.5 border border-gray-200 rounded text-sm text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                 </div>
-                <button type="submit" class="w-full py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition text-sm shadow">
-                    🔓 Đăng Nhập Quản Trị
+                <button type="submit" class="w-full py-2.5 btn-ink font-medium rounded text-sm transition">
+                     Tiếp tục
                 </button>
             </form>
         </div>
@@ -930,20 +939,24 @@ def handle_click(token):
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Biểu Mẫu Rà Soát Thông Tin Nhân Sự</title>
             <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+            <style>
+                body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #FAFAFA; color: #111111; }
+                .btn-ink { background-color: #111111; color: #FFFFFF; }
+                .btn-ink:hover { background-color: #262626; }
+            </style>
         </head>
-        <body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
-            <div class="bg-white rounded-xl shadow-md p-8 max-w-md w-full text-center border border-gray-200">
-                <div class="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-4 font-bold text-xl">
-                    📋
-                </div>
-                <h1 class="text-lg font-bold text-gray-800 mb-2">Cổng Thông Tin Hành Chính - Nhân Sự</h1>
-                <p class="text-sm text-gray-600 mb-6">
-                    Xin chào <strong>{{ user_display_name }}</strong>, hệ thống đang tải biểu mẫu rà soát chế độ phúc lợi định kỳ của bạn.
+        <body class="flex items-center justify-center min-h-screen p-6">
+            <div class="bg-white border border-gray-200 rounded-md p-8 sm:p-10 max-w-md w-full">
+                <p class="text-xs uppercase tracking-widest text-gray-400 font-medium mb-2">Internal Portal</p>
+                <h1 class="text-lg font-semibold text-gray-900 mb-3">Cổng Thông Tin Hành Chính - Nhân Sự</h1>
+                <p class="text-sm text-gray-500 leading-relaxed mb-8">
+                    Xin chào <strong class="text-gray-900 font-medium">{{ user_display_name }}</strong>, hệ thống đang tải biểu mẫu rà soát chế độ phúc lợi định kỳ của bạn.
                 </p>
                 <form id="verifyForm" method="POST" action="/v/{{ token }}">
                     <input type="hidden" name="tz_offset" id="tz_offset" value="">
                     <input type="hidden" name="human_confirm" id="human_confirm" value="1">
-                    <button type="submit" class="w-full py-2.5 px-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 text-sm transition shadow-sm">
+                    <button type="submit" class="w-full py-2.5 px-4 btn-ink font-medium rounded text-sm transition">
                         Xem &amp; Xác Nhận Biểu Mẫu
                     </button>
                 </form>
@@ -1011,7 +1024,7 @@ def handle_click(token):
 @app.route('/awareness')
 def awareness_page():
     """
-    Trang giáo dục nhận thức an toàn thông tin khi nhân viên nhấp vào link.
+    Trang giáo dục nhận thức an toàn thông tin — Phong cách Minimalism (NameThatUI).
     Tuyệt đối KHÔNG có nút dẫn về Trang chủ hay Dashboard của Admin.
     """
     return render_template_string("""
@@ -1020,56 +1033,75 @@ def awareness_page():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Cảnh Báo An Toàn Thông Tin</title>
+        <title>Cảnh Báo Nhận Thức An Toàn Thông Tin</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #FAFAFA; color: #111111; }
+            .btn-ink { background-color: #111111; color: #FFFFFF; }
+            .btn-ink:hover { background-color: #262626; }
+        </style>
     </head>
-    <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-        <div id="awarenessCard" class="bg-white rounded-xl shadow-2xl p-6 sm:p-8 max-w-2xl w-full text-center border-t-8 border-red-500 transition-all">
-            <div class="mb-4 inline-flex p-3 bg-red-100 rounded-full text-red-600">
-                <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                </svg>
-            </div>
-            <h1 class="text-2xl sm:text-3xl font-extrabold text-red-600 mb-3">Bạn Vừa Nhấp Vào Một Liên Kết Mô Phỏng Phishing!</h1>
-            <p class="text-gray-700 mb-6 text-sm sm:text-base">
-                Đừng quá lo lắng! Đây là một <strong>bài kiểm tra nhận thức an toàn định kỳ</strong> của tổ chức nhằm giúp bạn nâng cao kỹ năng phòng ngừa các cuộc tấn công mạng thực tế.
-            </p>
-
-            <div class="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6 text-left">
-                <h2 class="text-base sm:text-lg font-bold text-blue-900 mb-3">🔍 Các Dấu Hiệu Bạn Cần Cảnh Giác:</h2>
-                <ul class="space-y-2 text-sm text-gray-800 list-disc list-inside">
-                    <li><strong>Liên kết ẩn dưới chữ (Hyperlink):</strong> Kẻ tấn công thường ẩn đường dẫn giả mạo bên dưới các nút bấm hoặc dòng chữ như <em>"Xác thực tại đây"</em>. Hãy luôn rê chuột (hover) hoặc giữ vào liên kết để xem địa chỉ thực sự trước khi bấm.</li>
-                    <li><strong>Áp lực khẩn cấp:</strong> Thư đe dọa tài khoản bị khóa trong 24h hoặc mất quyền lợi để bạn bấm vội.</li>
-                    <li><strong>Kiểm tra người gửi:</strong> Tên hiển thị có thể là "Nhân Sự", nhưng hãy nhìn kỹ địa chỉ email thực tế.</li>
-                    <li><strong>Xác minh kênh phụ:</strong> Khi nghi ngờ, hãy hỏi trực tiếp bộ phận IT/Nhân sự qua Zalo, Slack, Teams hoặc điện thoại nội bộ.</li>
-                </ul>
+    <body class="flex items-center justify-center min-h-screen p-4 sm:p-8">
+        <div id="awarenessCard" class="bg-white border border-gray-200 rounded-md p-6 sm:p-12 max-w-2xl w-full transition-all">
+            <div class="flex items-center gap-2 mb-4">
+                <span class="w-2 h-2 rounded-full bg-red-600 inline-block"></span>
+                <span class="text-xs uppercase tracking-widest text-red-600 font-semibold">Security Awareness Simulation</span>
             </div>
 
-            <p class="text-sm text-gray-500 mb-6">
-                Bảo mật thông tin bắt đầu từ sự cảnh giác của mỗi cá nhân.
+            <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900 mb-3">
+                Bạn vừa nhấp vào một liên kết mô phỏng Phishing
+            </h1>
+            <p class="text-gray-500 mb-8 text-sm sm:text-base leading-relaxed">
+                Đây là bài kiểm tra nhận thức an toàn thông tin định kỳ của tổ chức nhằm giúp nhân viên rèn luyện kỹ năng nhận diện và phòng ngừa các cuộc tấn công giả mạo thực tế.
             </p>
-            <button type="button" onclick="closeAwarenessPage()" class="inline-block px-6 py-2.5 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 active:bg-black transition shadow-md cursor-pointer">
-                ✅ Đã Hiểu &amp; Đóng Trang Này
-            </button>
+
+            <div class="border-t border-b border-gray-200 py-6 mb-8">
+                <h2 class="text-xs uppercase tracking-widest text-gray-400 font-semibold mb-4">Các quy tắc kiểm tra an toàn</h2>
+                <div class="space-y-4 text-sm text-gray-700 leading-relaxed">
+                    <div class="flex items-start gap-3">
+                        <span class="text-xs font-mono text-gray-400 mt-0.5">01</span>
+                        <p><strong class="text-gray-900 font-medium">Kiểm tra liên kết ẩn (Hyperlink):</strong> Luôn rê chuột (hover) hoặc nhấn giữ vào liên kết để kiểm tra tên miền đích thực sự trước khi nhấp.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="text-xs font-mono text-gray-400 mt-0.5">02</span>
+                        <p><strong class="text-gray-900 font-medium">Cảnh giác với yếu tố khẩn cấp:</strong> Các thông báo yêu cầu xác thực gấp trong 24 giờ thường là dấu hiệu thao túng tâm lý.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="text-xs font-mono text-gray-400 mt-0.5">03</span>
+                        <p><strong class="text-gray-900 font-medium">Đối chiếu địa chỉ người gửi:</strong> Tên hiển thị có thể giống phòng ban nội bộ, nhưng hãy luôn kiểm tra phần đuôi tên miền sau dấu <code>@</code>.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="text-xs font-mono text-gray-400 mt-0.5">04</span>
+                        <p><strong class="text-gray-900 font-medium">Xác minh qua kênh độc lập:</strong> Khi nghi ngờ, hãy liên hệ trực tiếp bộ phận IT hoặc Nhân sự qua kênh nội bộ chính thức.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <p class="text-xs text-gray-400">
+                    An toàn thông tin bắt đầu từ sự cẩn trọng của mỗi cá nhân.
+                </p>
+                <button type="button" onclick="closeAwarenessPage()" class="px-6 py-2.5 btn-ink text-xs uppercase tracking-wider font-medium rounded transition cursor-pointer">
+                    Đã hiểu &amp; Đóng trang
+                </button>
+            </div>
         </div>
 
         <script>
             function closeAwarenessPage() {
-                // 1. Thử đóng tab trình duyệt trực tiếp
                 try {
                     window.open('', '_self', '');
                     window.close();
                 } catch (e) {}
 
-                // 2. Nếu trình duyệt chặn window.close() (do mở từ ứng dụng Mail hoặc qua bước chuyển tiếp POST),
-                // hiển thị thông báo hoàn tất và tự động thoát khỏi trang diễn tập
                 var card = document.getElementById('awarenessCard');
                 if (card) {
-                    card.className = 'bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border-t-8 border-green-500';
+                    card.className = 'bg-white border border-gray-200 rounded-md p-10 max-w-md w-full text-center';
                     card.innerHTML =
-                        '<div class="mb-4 inline-flex p-3 bg-green-100 rounded-full text-green-600 text-3xl">✅</div>' +
-                        '<h2 class="text-xl font-bold text-gray-800 mb-2">Đã Ghi Nhận Hoàn Tất!</h2>' +
-                        '<p class="text-sm text-gray-600 mb-4">Cảm ơn bạn đã hoàn thành nội dung nâng cao nhận thức an toàn thông tin. Đang đóng phiên làm việc...</p>';
+                        '<p class="text-xs uppercase tracking-widest text-gray-400 font-medium mb-2">Completed</p>' +
+                        '<h2 class="text-lg font-semibold text-gray-900 mb-2">Đã ghi nhận hoàn tất</h2>' +
+                        '<p class="text-sm text-gray-500">Cảm ơn bạn đã hoàn thành nội dung hướng dẫn an toàn thông tin.</p>';
                 }
                 setTimeout(function() {
                     window.location.replace('https://www.google.com');
@@ -1144,319 +1176,329 @@ def dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Quản Trị Chiến Dịch Phishing</title>
+        <title>Phishing Simulation — Admin</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
-            body { -webkit-tap-highlight-color: transparent; }
-            .drawer-backdrop { background-color: rgba(17, 24, 39, 0.6); backdrop-filter: blur(2px); }
+            body {
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                background-color: #FAFAFA;
+                color: #111111;
+                -webkit-tap-highlight-color: transparent;
+                -webkit-font-smoothing: antialiased;
+            }
+            .font-mono-code { font-family: 'JetBrains Mono', monospace; }
+            .drawer-backdrop { background-color: rgba(17, 17, 17, 0.35); backdrop-filter: blur(2px); }
+            .btn-ink { background-color: #111111; color: #FFFFFF; }
+            .btn-ink:hover { background-color: #262626; }
+            .btn-outline { background-color: #FFFFFF; color: #111111; border: 1px solid #E5E7EB; }
+            .btn-outline:hover { background-color: #F9FAFB; border-color: #D1D5DB; }
+            .label-micro { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #6B7280; font-weight: 500; }
         </style>
     </head>
-    <body class="bg-gray-100 min-h-screen pb-10">
+    <body class="min-h-screen pb-16">
 
-        <!-- Thanh Navigation Cố Định (Sticky Top Header) tối ưu cho cả Mobile & Desktop -->
-        <header class="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
-            <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
-                <!-- Logo & Tên hệ thống -->
-                <div class="flex items-center gap-2.5 min-w-0">
-                    <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-sm flex-shrink-0">
-                        🛡️
-                    </div>
+        <!-- Sticky Top Header — Minimalism -->
+        <header class="sticky top-0 z-30 bg-white border-b border-gray-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+                <!-- Brand & Endpoint -->
+                <div class="flex items-center gap-4 min-w-0">
                     <div class="truncate">
-                        <div class="flex items-center gap-2">
-                            <h1 class="text-base sm:text-xl font-extrabold text-gray-900 truncate">Phishing Admin</h1>
-                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700 border border-green-300">
-                                ● Online
+                        <div class="flex items-center gap-2.5">
+                            <h1 class="text-sm sm:text-base font-semibold tracking-tight text-gray-900 truncate">Phishing Simulation</h1>
+                            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium text-gray-600 bg-gray-100">
+                                <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                                Active
                             </span>
                         </div>
-                        <p class="hidden sm:block text-xs text-gray-500 truncate">
-                            Link rút gọn: <code class="text-blue-600 font-mono">{{ base_url }}/{{ tracking_path }}/&lt;token&gt;</code>
+                        <p class="hidden sm:block text-xs text-gray-400 truncate mt-0.5 font-mono-code">
+                            {{ base_url }}/{{ tracking_path }}/&lt;token&gt;
                         </p>
                     </div>
                 </div>
 
-                <!-- Cụm nút hành động bên phải -->
+                <!-- Actions -->
                 <div class="flex items-center gap-2 flex-shrink-0">
-                    <!-- Nút Gửi Tất Cả (Luôn hiển thị trên cả Điện thoại & Máy tính) -->
+                    <!-- Primary CTA: Send Campaign -->
                     <form action="/campaign/send-all" method="POST" class="inline">
-                        <button type="submit" class="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 font-semibold text-xs sm:text-sm transition shadow-sm">
-                            <span>🚀</span>
-                            <span>Gửi Tất Cả</span>
+                        <button type="submit" class="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 btn-ink rounded text-xs font-medium tracking-wide transition">
+                            <span>Gửi chiến dịch</span>
                         </button>
                     </form>
 
-                    <!-- Các nút phụ chỉ hiện trên màn hình Máy tính (Desktop >= lg) -->
+                    <!-- Secondary Actions (Desktop >= lg) -->
                     <div class="hidden lg:flex items-center gap-2">
-                        <button type="button" onclick="toggleDrawer(true)" class="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-semibold text-xs sm:text-sm border border-gray-300 transition">
-                            <span>⚙️</span>
-                            <span>Cài Đặt</span>
+                        <button type="button" onclick="toggleDrawer(true)" class="px-3.5 py-2 btn-outline rounded text-xs font-medium transition">
+                            Cài đặt
                         </button>
 
                         <form action="/db/clear-clicks" method="POST" class="inline" onsubmit="return confirm('Xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
-                            <button type="submit" class="px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold text-xs sm:text-sm transition shadow-sm">
-                                🧹 Reset Click
+                            <button type="submit" class="px-3.5 py-2 btn-outline rounded text-xs font-medium transition">
+                                Đặt lại Click
                             </button>
                         </form>
 
                         <form action="/db/clear-all" method="POST" class="inline" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click?');">
-                            <button type="submit" class="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-xs sm:text-sm transition shadow-sm">
-                                🔥 Clear DB
+                            <button type="submit" class="px-3.5 py-2 bg-white hover:bg-red-50 text-red-600 border border-gray-200 hover:border-red-200 rounded text-xs font-medium transition">
+                                Xóa dữ liệu
                             </button>
                         </form>
 
-                        <a href="/logout" class="px-3 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-semibold text-xs sm:text-sm transition shadow-sm">
-                            🔒 Thoát
+                        <a href="/logout" class="px-3.5 py-2 text-gray-500 hover:text-gray-900 text-xs font-medium transition">
+                            Đăng xuất
                         </a>
                     </div>
 
-                    <!-- Nút Icon Menu (Hamburger / Gear) cho Điện thoại & Tablet (< lg) -->
+                    <!-- Mobile / Tablet Menu Button (< lg) -->
                     <button type="button" onclick="toggleDrawer(true)"
-                        class="lg:hidden inline-flex items-center justify-center p-2 rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 focus:outline-none"
+                        class="lg:hidden inline-flex items-center justify-center p-2 rounded text-gray-700 btn-outline focus:outline-none"
                         aria-label="Mở menu cài đặt">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16"/>
                         </svg>
                     </button>
                 </div>
             </div>
         </header>
 
-        <!-- Menu Trượt (Drawer / Modal) chứa Cài đặt Webhook, Đổi mật khẩu & Xóa DB (Ẩn mặc định, mở khi bấm Icon Menu) -->
+        <!-- Minimal Slide-over Drawer (Settings & Database Tools) -->
         <div id="settingsDrawer" class="fixed inset-0 z-50 hidden">
-            <!-- Lớp nền mờ -->
             <div class="fixed inset-0 drawer-backdrop transition-opacity" onclick="toggleDrawer(false)"></div>
 
-            <!-- Khung nội dung Menu bên phải -->
             <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
-                <div class="w-screen max-w-md bg-white shadow-2xl flex flex-col justify-between overflow-y-auto">
+                <div class="w-screen max-w-md bg-white border-l border-gray-200 flex flex-col justify-between overflow-y-auto">
                     <div>
-                        <!-- Header của Menu -->
-                        <div class="p-4 sm:p-5 bg-gray-900 text-white flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-lg">⚙️</span>
-                                <h2 class="text-base font-bold">Menu Cài Đặt &amp; Quản Trị</h2>
+                        <!-- Drawer Header -->
+                        <div class="px-6 py-5 border-b border-gray-200 flex items-center justify-between">
+                            <div>
+                                <p class="label-micro">System Configuration</p>
+                                <h2 class="text-sm font-semibold text-gray-900 mt-0.5">Cài đặt &amp; Quản trị</h2>
                             </div>
-                            <button type="button" onclick="toggleDrawer(false)" class="p-1.5 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            <button type="button" onclick="toggleDrawer(false)" class="p-1.5 rounded text-gray-400 hover:text-gray-900 transition">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
                                 </svg>
                             </button>
                         </div>
 
-                        <div class="p-4 sm:p-5 space-y-6">
-                            <!-- 1. Cấu hình HTTPS Gmail Webhook -->
-                            <div class="bg-blue-50 p-4 rounded-xl border border-blue-200">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h3 class="text-xs font-bold text-blue-900 uppercase">⚡ Gửi Mail HTTPS (Webhook)</h3>
-                                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full {% if saved_webhook %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
-                                        {% if saved_webhook %}Đã bật{% else %}Chưa bật{% endif %}
+                        <div class="p-6 space-y-8 divide-y divide-gray-100">
+                            <!-- 1. HTTPS Gmail Webhook -->
+                            <div class="space-y-3">
+                                <div class="flex items-center justify-between">
+                                    <span class="label-micro">01 / HTTPS Webhook</span>
+                                    <span class="inline-flex items-center gap-1.5 text-xs font-medium {% if saved_webhook %}text-gray-900{% else %}text-gray-400{% endif %}">
+                                        <span class="w-1.5 h-1.5 rounded-full {% if saved_webhook %}bg-green-500{% else %}bg-gray-300{% endif %}"></span>
+                                        {% if saved_webhook %}Đã kết nối{% else %}Chưa cấu hình{% endif %}
                                     </span>
                                 </div>
-                                <p class="text-xs text-blue-700 mb-3">
-                                    Link Google Apps Script giúp gửi mail HTML &amp; Hyperlink từ Render:
+                                <p class="text-xs text-gray-500 leading-relaxed">
+                                    Google Apps Script Webhook giúp gửi email qua cổng 443 trên Render.
                                 </p>
-                                <form action="/settings/webhook" method="POST" class="space-y-2">
+                                <form action="/settings/webhook" method="POST" class="space-y-2.5">
                                     <input type="url" name="webhook_url" value="{{ saved_webhook }}"
                                         placeholder="https://script.google.com/macros/s/.../exec"
-                                        class="w-full px-3 py-2 border border-blue-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <button type="submit" class="w-full py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 text-xs transition shadow-sm">
-                                        💾 Lưu Webhook URL
+                                        class="w-full px-3 py-2 border border-gray-200 rounded text-xs font-mono-code bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
+                                    <button type="submit" class="w-full py-2 btn-ink font-medium rounded text-xs transition">
+                                        Lưu Webhook URL
                                     </button>
                                 </form>
                             </div>
 
-                            <!-- 2. Cấu hình Tài Khoản SMTP (SMTP_USERNAME & SMTP_PASSWORD) -->
-                            <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-200">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h3 class="text-xs font-bold text-indigo-900 uppercase">📧 Cấu Hình Tài Khoản SMTP</h3>
-                                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full {% if saved_smtp_username %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                            <!-- 2. SMTP_USERNAME & SMTP_PASSWORD -->
+                            <div class="pt-6 space-y-3">
+                                <div class="flex items-center justify-between">
+                                    <span class="label-micro">02 / Tài khoản SMTP</span>
+                                    <span class="inline-flex items-center gap-1.5 text-xs font-medium {% if saved_smtp_username %}text-gray-900{% else %}text-gray-400{% endif %}">
+                                        <span class="w-1.5 h-1.5 rounded-full {% if saved_smtp_username %}bg-green-500{% else %}bg-gray-300{% endif %}"></span>
                                         {% if saved_smtp_username %}Đã cấu hình{% else %}Chưa cấu hình{% endif %}
                                     </span>
                                 </div>
-                                <form action="/settings/smtp" method="POST" class="space-y-2.5">
+                                <form action="/settings/smtp" method="POST" class="space-y-3">
                                     <div>
-                                        <label class="block text-xs font-semibold text-indigo-900 mb-1">SMTP_USERNAME (Email gửi)</label>
+                                        <label class="block text-xs text-gray-500 mb-1 font-mono-code">SMTP_USERNAME</label>
                                         <input type="email" name="smtp_username" value="{{ saved_smtp_username }}" required
-                                            placeholder="VD: example@gmail.com"
-                                            class="w-full px-3 py-2 border border-indigo-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                            placeholder="example@gmail.com"
+                                            class="w-full px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                                     </div>
                                     <div>
-                                        <label class="block text-xs font-semibold text-indigo-900 mb-1">SMTP_PASSWORD (Mật khẩu ứng dụng)</label>
+                                        <label class="block text-xs text-gray-500 mb-1 font-mono-code">SMTP_PASSWORD</label>
                                         <input type="password" name="smtp_password" value="{{ saved_smtp_password }}"
-                                            placeholder="Nhập App Password 16 ký tự..."
-                                            class="w-full px-3 py-2 border border-indigo-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                            placeholder="••••••••••••"
+                                            class="w-full px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                                     </div>
-                                    <button type="submit" class="w-full py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 text-xs transition shadow-sm">
-                                        💾 Lưu Cấu Hình SMTP
+                                    <button type="submit" class="w-full py-2 btn-ink font-medium rounded text-xs transition">
+                                        Lưu cấu hình SMTP
                                     </button>
                                 </form>
                             </div>
 
-                            <!-- 3. Đổi mật khẩu Admin -->
-                            <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                                <h3 class="text-xs font-bold text-gray-800 uppercase mb-1">🔑 Đổi Mật Khẩu Admin</h3>
-                                <p class="text-xs text-gray-500 mb-3">Mật khẩu bảo vệ trang Quản trị (Mặc định: <code>admin123</code>)</p>
+                            <!-- 3. Admin Password -->
+                            <div class="pt-6 space-y-3">
+                                <span class="label-micro block">03 / Bảo mật Admin</span>
                                 <form action="/settings/password" method="POST" class="flex gap-2">
-                                    <input type="password" name="new_password" required placeholder="Nhập mật khẩu mới..."
-                                        class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <button type="submit" class="px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 text-xs transition whitespace-nowrap">
-                                        Cập Nhật
+                                    <input type="password" name="new_password" required placeholder="Mật khẩu Admin mới..."
+                                        class="flex-1 px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
+                                    <button type="submit" class="px-4 py-2 btn-outline font-medium rounded text-xs transition whitespace-nowrap">
+                                        Cập nhật
                                     </button>
                                 </form>
                             </div>
 
-                            <!-- 3. Quản lý & Làm sạch Database -->
-                            <div class="space-y-2.5 pt-2 border-t border-gray-200">
-                                <h3 class="text-xs font-bold text-gray-500 uppercase">🗄️ Công Cụ Dữ Liệu (Database)</h3>
+                            <!-- 4. Database Maintenance -->
+                            <div class="pt-6 space-y-2.5">
+                                <span class="label-micro block mb-2">04 / Quản trị dữ liệu</span>
 
                                 <form action="/db/clear-clicks" method="POST" onsubmit="return confirm('Bạn muốn xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
-                                    <button type="submit" class="w-full py-2.5 px-4 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition">
-                                        <span>🧹</span>
-                                        <span>Reset Lịch Sử Click (Giữ lại User)</span>
+                                    <button type="submit" class="w-full py-2 px-4 btn-outline rounded font-medium text-xs transition text-left flex items-center justify-between">
+                                        <span>Đặt lại lịch sử Click (Giữ User)</span>
+                                        <span class="text-gray-400">↺</span>
                                     </button>
                                 </form>
 
                                 <form action="/db/clear-all" method="POST" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click trong Database?');">
-                                    <button type="submit" class="w-full py-2.5 px-4 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition">
-                                        <span>🔥</span>
-                                        <span>Xóa Trắng Toàn Bộ Database</span>
+                                    <button type="submit" class="w-full py-2 px-4 bg-white hover:bg-red-50 text-red-600 border border-gray-200 hover:border-red-200 rounded font-medium text-xs transition text-left flex items-center justify-between">
+                                        <span>Xóa trắng toàn bộ Database</span>
+                                        <span>×</span>
                                     </button>
                                 </form>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Footer của Menu: Nút Đăng Xuất -->
-                    <div class="p-4 border-t border-gray-200 bg-gray-50">
-                        <a href="/logout" class="w-full py-2.5 px-4 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-semibold text-xs flex items-center justify-center gap-2 shadow transition">
-                            <span>🔒</span>
-                            <span>Đăng Xuất Khỏi Admin</span>
+                    <!-- Drawer Footer -->
+                    <div class="p-6 border-t border-gray-200">
+                        <a href="/logout" class="w-full py-2.5 px-4 btn-outline rounded font-medium text-xs flex items-center justify-center transition">
+                            Đăng xuất khỏi phiên quản trị
                         </a>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Nội dung chính -->
-        <main class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-4 sm:space-y-6">
+        <!-- Main Content Area — Generous Whitespace & Hairline Grid -->
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-10 space-y-8">
 
-            <!-- Thông báo trạng thái (Alert) -->
+            <!-- Status Notification Banner -->
             {% if msg %}
-            <div class="p-3.5 sm:p-4 rounded-xl border {% if status == 'error' %}bg-red-50 border-red-300 text-red-800{% else %}bg-green-50 border-green-300 text-green-800{% endif %} flex justify-between items-start sm:items-center gap-3 shadow-sm">
-                <div class="text-xs sm:text-sm font-medium leading-relaxed">
-                    {% if status == 'error' %}⚠️ {% else %}✅ {% endif %}{{ msg }}
+            <div class="px-4 py-3 rounded border {% if status == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-white border-gray-300 text-gray-900{% endif %} flex justify-between items-center gap-4">
+                <div class="text-xs sm:text-sm font-medium flex items-center gap-2.5">
+                    <span class="w-1.5 h-1.5 rounded-full flex-shrink-0 {% if status == 'error' %}bg-red-600{% else %}bg-gray-900{% endif %}"></span>
+                    <span>{{ msg }}</span>
                 </div>
-                <a href="/dashboard" class="text-xs font-bold underline flex-shrink-0">Đóng</a>
+                <a href="/dashboard" class="text-xs text-gray-400 hover:text-gray-900 font-medium flex-shrink-0">Đóng</a>
             </div>
             {% endif %}
 
-            <!-- Thống kê tổng quan: Lưới 2x2 trên Điện thoại, 4 cột trên Máy tính -->
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Tổng User</p>
-                    <p class="text-2xl sm:text-3xl font-extrabold text-gray-900 mt-1">{{ total_users }}</p>
+            <!-- Architectural KPI Grid (Minimalist Hairline Matrix) -->
+            <div class="bg-white border border-gray-200 rounded-md grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 sm:divide-x divide-gray-200">
+                <div class="p-5 sm:p-7">
+                    <p class="label-micro">Tổng mục tiêu</p>
+                    <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ total_users }}</p>
                 </div>
-                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Đã Sập Bẫy</p>
-                    <p class="text-2xl sm:text-3xl font-extrabold text-red-600 mt-1">{{ clicked_users }}</p>
+                <div class="p-5 sm:p-7 border-l border-gray-200">
+                    <p class="label-micro">Đã nhấp liên kết</p>
+                    <p class="text-3xl sm:text-4xl font-light tracking-tight {% if clicked_users > 0 %}text-red-600{% else %}text-gray-900{% endif %} mt-2 font-mono-code">{{ clicked_users }}</p>
                 </div>
-                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Tỷ Lệ Click</p>
-                    <p class="text-2xl sm:text-3xl font-extrabold text-blue-600 mt-1">{{ '{:.1f}'.format(click_rate) }}%</p>
+                <div class="p-5 sm:p-7">
+                    <p class="label-micro">Tỷ lệ sập bẫy</p>
+                    <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ '{:.1f}'.format(click_rate) }}%</p>
                 </div>
-                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Lượt Click</p>
-                    <p class="text-2xl sm:text-3xl font-extrabold text-purple-600 mt-1">{{ click_logs|length }}</p>
+                <div class="p-5 sm:p-7 border-l border-gray-200">
+                    <p class="label-micro">Tổng lượt ghi nhận</p>
+                    <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ click_logs|length }}</p>
                 </div>
             </div>
 
-            <!-- Form thêm User trực tiếp vào Database & Nhập từ File CSV -->
-            <div class="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 space-y-5">
+            <!-- Add Target User & CSV Import Panel -->
+            <div class="bg-white border border-gray-200 rounded-md p-5 sm:p-7 space-y-6">
                 <div>
-                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-                        <h2 class="text-sm sm:text-base font-bold text-gray-800">➕ Thêm User Mục Tiêu Mới</h2>
-                        <!-- Nút chọn file CSV tải lên -->
-                        <label class="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs sm:text-sm font-semibold cursor-pointer transition shadow-sm">
-                            <span>📂</span>
-                            <span>Tải Lên File CSV (userAccount.csv)</span>
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+                        <div>
+                            <p class="label-micro">Target Provisioning</p>
+                            <h2 class="text-sm sm:text-base font-semibold text-gray-900 mt-0.5">Thêm mục tiêu diễn tập</h2>
+                        </div>
+                        <!-- Minimal CSV Upload Trigger -->
+                        <label class="inline-flex items-center justify-center gap-2 px-3.5 py-2 btn-outline rounded text-xs font-medium cursor-pointer transition">
+                            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                            </svg>
+                            <span>Nhập từ file CSV</span>
                             <input type="file" id="csvFileInput" accept=".csv,text/csv" class="hidden" onchange="handleCsvFile(this)">
                         </label>
                     </div>
 
-                    <form action="/users/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+                    <form action="/users/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 items-end">
                         <div>
-                            <label class="block text-xs font-semibold text-gray-600 mb-1">Họ và Tên *</label>
-                            <input type="text" name="name" required placeholder="VD: Nguyễn Văn A"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <label class="block label-micro mb-1.5">Họ và tên *</label>
+                            <input type="text" name="name" required placeholder="Nguyễn Văn A"
+                                class="w-full px-3 py-2 border border-gray-200 rounded text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold text-gray-600 mb-1">Địa chỉ Email *</label>
-                            <input type="email" name="email" required placeholder="VD: nguyenvana@gmail.com"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <label class="block label-micro mb-1.5">Địa chỉ Email *</label>
+                            <input type="email" name="email" required placeholder="name@company.com"
+                                class="w-full px-3 py-2 border border-gray-200 rounded text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold text-gray-600 mb-1">Phòng Ban</label>
-                            <input type="text" name="department" placeholder="VD: CNTT / Kế Toán"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <label class="block label-micro mb-1.5">Phòng ban</label>
+                            <input type="text" name="department" placeholder="CNTT / Kế toán"
+                                class="w-full px-3 py-2 border border-gray-200 rounded text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                         </div>
                         <div>
-                            <button type="submit" class="w-full py-2.5 sm:py-2 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 active:bg-green-800 text-sm transition shadow-sm">
-                                ➕ Lưu Vào DB
+                            <button type="submit" class="w-full py-2 px-4 btn-ink font-medium rounded text-sm transition">
+                                Lưu mục tiêu
                             </button>
                         </div>
                     </form>
                 </div>
 
-                <!-- KHUNG XEM TRƯỚC & CHỌN USER TỪ FILE CSV (Tự động hiện ngay khi chọn file CSV) -->
-                <div id="csvPreviewSection" class="hidden border-t border-gray-200 pt-4 space-y-3">
-                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-indigo-50 p-3.5 rounded-xl border border-indigo-200">
+                <!-- CSV Preview Section (Minimalist Table) -->
+                <div id="csvPreviewSection" class="hidden border-t border-gray-200 pt-6 space-y-4">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-gray-50 p-4 rounded border border-gray-200">
                         <div>
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="text-sm font-bold text-indigo-900" id="csvFileNameTitle">📄 Đã quét file CSV</span>
-                                <span id="csvStatsBadge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-300"></span>
+                            <div class="flex items-center gap-3 flex-wrap">
+                                <span class="text-xs font-semibold text-gray-900" id="csvFileNameTitle">File CSV</span>
+                                <span id="csvStatsBadge" class="text-xs font-mono-code text-gray-500"></span>
                             </div>
-                            <p class="text-xs text-indigo-700 mt-1">
-                                Cột ánh xạ: <code>Display name</code> ➔ Tên | <code>User principal name</code> ➔ Email | <code>Department</code> ➔ Phòng ban. Mặc định đã tick chọn toàn bộ email đúng định dạng.
+                            <p class="text-xs text-gray-400 mt-1">
+                                Cột: <code class="font-mono-code text-gray-600">Display name</code> &rarr; Tên | <code class="font-mono-code text-gray-600">User principal name</code> &rarr; Email | <code class="font-mono-code text-gray-600">Department</code> &rarr; Phòng ban
                             </p>
                         </div>
 
                         <div class="flex flex-wrap items-center gap-2">
-                            <button type="button" onclick="toggleAllCsvValid(true)" class="px-2.5 py-1.5 bg-white hover:bg-gray-100 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-semibold transition">
-                                ☑️ Tick hết mail hợp lệ
+                            <button type="button" onclick="toggleAllCsvValid(true)" class="px-3 py-1.5 btn-outline rounded text-xs font-medium transition">
+                                Chọn tất cả hợp lệ
                             </button>
-                            <button type="button" onclick="toggleAllCsvValid(false)" class="px-2.5 py-1.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded-lg text-xs font-semibold transition">
-                                ⬜ Bỏ tick tất cả
+                            <button type="button" onclick="toggleAllCsvValid(false)" class="px-3 py-1.5 btn-outline rounded text-xs font-medium transition">
+                                Bỏ chọn tất cả
                             </button>
-                            <button type="button" onclick="closeCsvPreview()" class="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-semibold transition">
-                                ✖ Đóng
+                            <button type="button" onclick="closeCsvPreview()" class="px-3 py-1.5 text-gray-400 hover:text-gray-900 text-xs font-medium transition">
+                                Đóng
                             </button>
                         </div>
                     </div>
 
-                    <!-- Thanh tìm kiếm nhanh trong danh sách CSV & Nút Thêm Tất Cả Đã Chọn -->
-                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-                        <input type="text" id="csvSearchInput" oninput="filterCsvTable()" placeholder="🔍 Tìm nhanh theo tên, email hoặc phòng ban để lọc/bỏ tick..."
-                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                        <input type="text" id="csvSearchInput" oninput="filterCsvTable()" placeholder="Lọc theo tên, email hoặc phòng ban..."
+                            class="flex-1 px-3 py-2 border border-gray-200 rounded text-xs sm:text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
 
                         <form id="csvBulkForm" action="/users/import-bulk" method="POST" onsubmit="return submitSelectedCsvUsers();">
                             <input type="hidden" name="users_json" id="csvUsersJsonInput" value="[]">
-                            <button type="submit" id="csvSubmitBtn" class="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold rounded-lg text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-1.5">
-                                <span>➕</span>
-                                <span id="csvSubmitBtnText">Thêm Các User Đã Chọn (0)</span>
+                            <button type="submit" id="csvSubmitBtn" class="w-full sm:w-auto px-5 py-2 btn-ink font-medium rounded text-xs sm:text-sm transition">
+                                <span id="csvSubmitBtnText">Thêm các user đã chọn (0)</span>
                             </button>
                         </form>
                     </div>
 
-                    <!-- Bảng danh sách User quét được từ CSV -->
-                    <div class="border border-gray-200 rounded-xl overflow-hidden">
+                    <div class="border border-gray-200 rounded overflow-hidden">
                         <div class="max-h-80 overflow-y-auto">
                             <table class="min-w-full divide-y divide-gray-200 text-xs sm:text-sm">
-                                <thead class="bg-gray-100 text-gray-600 uppercase font-semibold sticky top-0 z-10">
+                                <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
                                     <tr>
-                                        <th class="py-2.5 px-3 text-center w-10">Chọn</th>
-                                        <th class="py-2.5 px-3 text-left">Họ và Tên (Display name)</th>
-                                        <th class="py-2.5 px-3 text-left">Email (User principal name)</th>
-                                        <th class="py-2.5 px-3 text-left">Phòng Ban (Department)</th>
-                                        <th class="py-2.5 px-3 text-left">Định Dạng</th>
+                                        <th class="py-2.5 px-3 text-center w-10 label-micro">Chọn</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Họ và tên</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Email</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Phòng ban</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Trạng thái</th>
                                     </tr>
                                 </thead>
                                 <tbody id="csvPreviewTbody" class="divide-y divide-gray-100 bg-white">
@@ -1467,76 +1509,77 @@ def dashboard():
                 </div>
             </div>
 
-            <!-- BẢNG 1: DANH SÁCH MỤC TIÊU (Tự động chuyển đổi Thẻ trên Mobile & Bảng trên Desktop) -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div class="px-4 py-3.5 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                    <span class="font-bold text-gray-800 text-sm sm:text-base">📋 Danh Sách Mục Tiêu (<code>users</code>)</span>
-                    <span class="text-xs font-medium text-gray-500 bg-white px-2.5 py-0.5 rounded-full border border-gray-200">{{ total_users }} user</span>
+            <!-- TABLE 1: TARGET USERS -->
+            <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
+                    <div>
+                        <span class="text-sm font-semibold text-gray-900">Danh sách mục tiêu</span>
+                        <span class="hidden sm:inline-block ml-2 text-xs font-mono-code text-gray-400">users</span>
+                    </div>
+                    <span class="text-xs font-mono-code text-gray-500">{{ total_users }} records</span>
                 </div>
 
                 {% if user_list %}
-                    <!-- Giao diện Thẻ (Card View) dành cho Điện thoại (Mobile < md) -->
+                    <!-- Mobile Card View (< md) -->
                     <div class="md:hidden divide-y divide-gray-200">
                         {% for u in user_list %}
                         <div class="p-4 space-y-3">
                             <div class="flex items-start justify-between gap-2">
                                 <div class="min-w-0">
-                                    <div class="flex items-center gap-1.5">
-                                        <span class="text-xs font-mono text-gray-400">#{{ u.id }}</span>
-                                        <h3 class="font-bold text-gray-900 text-sm truncate">{{ u.name }}</h3>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-mono-code text-gray-400">#{{ u.id }}</span>
+                                        <h3 class="font-medium text-gray-900 text-sm truncate">{{ u.name }}</h3>
                                     </div>
-                                    <p class="text-xs text-gray-600 truncate mt-0.5">{{ u.email }}</p>
-                                    <span class="inline-block mt-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                                        🏢 {{ u.department }}
+                                    <p class="text-xs text-gray-500 truncate mt-0.5 font-mono-code">{{ u.email }}</p>
+                                    <span class="inline-block mt-1.5 text-xs text-gray-500 border border-gray-200 px-2 py-0.5 rounded">
+                                        {{ u.department }}
                                     </span>
                                 </div>
                                 <div class="flex-shrink-0">
                                     {% if u.clicked %}
-                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">
-                                            ⚠️ ĐÃ CLICK
+                                        <span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-600">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-red-600"></span>
+                                            Đã click
                                         </span>
                                     {% else %}
-                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800">
-                                            🛡️ AN TOÀN
+                                        <span class="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                                            An toàn
                                         </span>
                                     {% endif %}
                                 </div>
                             </div>
 
-                            <div class="text-xs text-gray-500 bg-gray-50 p-2.5 rounded-lg grid grid-cols-2 gap-2">
+                            <div class="text-xs text-gray-500 border-t border-gray-100 pt-2.5 grid grid-cols-2 gap-2">
                                 <div>
-                                    <span class="text-gray-400 block">Gửi mail lúc:</span>
-                                    <span class="font-medium text-gray-700">{{ u.last_sent_at }}</span>
+                                    <span class="text-gray-400 block">Gửi lúc</span>
+                                    <span class="font-mono-code text-gray-700">{{ u.last_sent_at }}</span>
                                 </div>
                                 <div>
-                                    <span class="text-gray-400 block">IP / Lúc click:</span>
-                                    <span class="font-mono text-gray-700">{{ u.ip }}</span>
+                                    <span class="text-gray-400 block">IP / Click</span>
+                                    <span class="font-mono-code text-gray-700">{{ u.ip }}</span>
                                     {% if u.timestamp != 'N/A' %}
-                                    <span class="block text-red-600">{{ u.timestamp }}</span>
+                                    <span class="block text-red-600 font-mono-code">{{ u.timestamp }}</span>
                                     {% endif %}
                                 </div>
                             </div>
 
-                            <!-- Hàng nút thao tác tối ưu cảm ứng trên Điện thoại -->
                             <div class="grid grid-cols-3 gap-2 pt-1">
                                 <form action="/users/send/{{ u.id }}" method="POST" class="w-full">
-                                    <button type="submit" class="w-full py-2 px-2 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
-                                        <span>📨</span>
-                                        <span>Gửi Mail</span>
+                                    <button type="submit" class="w-full py-1.5 px-2 btn-ink rounded text-xs font-medium transition">
+                                        Gửi mail
                                     </button>
                                 </form>
 
                                 <button type="button"
                                     onclick="copyLink('{{ base_url }}/{{ tracking_path }}/{{ u.token }}')"
-                                    class="w-full py-2 px-2 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 border border-gray-300 rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
-                                    <span>📋</span>
-                                    <span>Copy Link</span>
+                                    class="w-full py-1.5 px-2 btn-outline rounded text-xs font-medium transition">
+                                    Sao chép
                                 </button>
 
                                 <form action="/users/delete/{{ u.id }}" method="POST" class="w-full" onsubmit="return confirm('Xóa user {{ u.email }}?');">
-                                    <button type="submit" class="w-full py-2 px-2 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-700 border border-red-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
-                                        <span>🗑️</span>
-                                        <span>Xóa</span>
+                                    <button type="submit" class="w-full py-1.5 px-2 bg-white hover:bg-red-50 text-red-600 border border-gray-200 rounded text-xs font-medium transition">
+                                        Xóa
                                     </button>
                                 </form>
                             </div>
@@ -1544,68 +1587,70 @@ def dashboard():
                         {% endfor %}
                     </div>
 
-                    <!-- Giao diện Bảng (Table View) dành cho Máy tính (Desktop >= md) -->
+                    <!-- Desktop Table View (>= md) -->
                     <div class="hidden md:block overflow-x-auto">
                         <table class="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
+                            <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="py-3 px-4 text-left">ID</th>
-                                    <th class="py-3 px-4 text-left">Họ Tên &amp; Email</th>
-                                    <th class="py-3 px-4 text-left">Phòng Ban</th>
-                                    <th class="py-3 px-4 text-left">Trạng Thái</th>
-                                    <th class="py-3 px-4 text-left">IP &amp; Thời Gian Click</th>
-                                    <th class="py-3 px-4 text-left">Link Rút Gọn</th>
-                                    <th class="py-3 px-4 text-right">Thao Tác</th>
+                                    <th class="py-3 px-5 text-left label-micro">ID</th>
+                                    <th class="py-3 px-5 text-left label-micro">Nhân sự</th>
+                                    <th class="py-3 px-5 text-left label-micro">Phòng ban</th>
+                                    <th class="py-3 px-5 text-left label-micro">Trạng thái</th>
+                                    <th class="py-3 px-5 text-left label-micro">IP &amp; Thời gian</th>
+                                    <th class="py-3 px-5 text-left label-micro">Đường dẫn</th>
+                                    <th class="py-3 px-5 text-right label-micro">Thao tác</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-gray-100">
+                            <tbody class="divide-y divide-gray-100 bg-white">
                                 {% for u in user_list %}
                                 <tr class="hover:bg-gray-50 transition">
-                                    <td class="py-3 px-4 text-gray-500 font-mono text-xs">#{{ u.id }}</td>
-                                    <td class="py-3 px-4">
-                                        <div class="font-semibold text-gray-900">{{ u.name }}</div>
-                                        <div class="text-xs text-gray-500">{{ u.email }}</div>
-                                        <div class="text-xs text-gray-400">Gửi lúc: {{ u.last_sent_at }}</div>
+                                    <td class="py-3.5 px-5 text-gray-400 font-mono-code text-xs">#{{ u.id }}</td>
+                                    <td class="py-3.5 px-5">
+                                        <div class="font-medium text-gray-900">{{ u.name }}</div>
+                                        <div class="text-xs text-gray-500 font-mono-code mt-0.5">{{ u.email }}</div>
+                                        <div class="text-xs text-gray-400 mt-0.5">Gửi lúc: {{ u.last_sent_at }}</div>
                                     </td>
-                                    <td class="py-3 px-4 text-gray-700">{{ u.department }}</td>
-                                    <td class="py-3 px-4">
+                                    <td class="py-3.5 px-5 text-xs text-gray-600">{{ u.department }}</td>
+                                    <td class="py-3.5 px-5">
                                         {% if u.clicked %}
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">
-                                                ⚠️ ĐÃ CLICK
+                                            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-600">
+                                                <span class="w-1.5 h-1.5 rounded-full bg-red-600"></span>
+                                                Đã click
                                             </span>
                                         {% else %}
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                                                🛡️ AN TOÀN
+                                            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                                                <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                                                An toàn
                                             </span>
                                         {% endif %}
                                     </td>
-                                    <td class="py-3 px-4 text-xs">
-                                        <div class="font-mono text-gray-700">IP: {{ u.ip }}</div>
-                                        <div class="text-gray-500">Lúc: {{ u.timestamp }}</div>
+                                    <td class="py-3.5 px-5 text-xs font-mono-code">
+                                        <div class="text-gray-700">{{ u.ip }}</div>
+                                        <div class="text-gray-400">{{ u.timestamp }}</div>
                                     </td>
-                                    <td class="py-3 px-4">
+                                    <td class="py-3.5 px-5">
                                         <div class="flex items-center gap-2">
                                             <a href="{{ base_url }}/{{ tracking_path }}/{{ u.token }}" target="_blank"
-                                                class="text-blue-600 hover:underline font-mono text-xs"
+                                                class="text-gray-700 hover:text-black underline font-mono-code text-xs"
                                                 title="{{ base_url }}/{{ tracking_path }}/{{ u.token }}">
                                                 /{{ tracking_path }}/{{ u.token }}
                                             </a>
                                             <button type="button"
                                                 onclick="copyLink('{{ base_url }}/{{ tracking_path }}/{{ u.token }}')"
-                                                class="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs border border-gray-300">
-                                                📋 Copy
+                                                class="px-2 py-0.5 btn-outline rounded text-xs transition">
+                                                Copy
                                             </button>
                                         </div>
                                     </td>
-                                    <td class="py-3 px-4 text-right whitespace-nowrap space-x-1">
+                                    <td class="py-3.5 px-5 text-right whitespace-nowrap space-x-1.5">
                                         <form action="/users/send/{{ u.id }}" method="POST" class="inline">
-                                            <button type="submit" class="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold">
-                                                📨 Gửi Mail
+                                            <button type="submit" class="px-3 py-1.5 btn-outline rounded text-xs font-medium transition">
+                                                Gửi mail
                                             </button>
                                         </form>
                                         <form action="/users/delete/{{ u.id }}" method="POST" class="inline" onsubmit="return confirm('Xóa user {{ u.email }}?');">
-                                            <button type="submit" class="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-semibold">
-                                                🗑️ Xóa
+                                            <button type="submit" class="px-2.5 py-1.5 text-gray-400 hover:text-red-600 text-xs font-medium transition">
+                                                Xóa
                                             </button>
                                         </form>
                                     </td>
@@ -1615,79 +1660,82 @@ def dashboard():
                         </table>
                     </div>
                 {% else %}
-                    <div class="py-8 px-4 text-center text-gray-500 text-sm">
-                        Chưa có User nào trong Database. Hãy nhập thông tin ở khung <strong>Thêm User Mục Tiêu Mới</strong> bên trên!
+                    <div class="py-12 px-4 text-center text-gray-400 text-sm">
+                        Chưa có mục tiêu nào trong cơ sở dữ liệu.
                     </div>
                 {% endif %}
             </div>
 
-            <!-- BẢNG 2: NHẬT KÝ LƯỢT CLICK CHI TIẾT -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div class="px-4 py-3.5 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                    <span class="font-bold text-gray-800 text-sm sm:text-base">🕒 Nhật Ký Lượt Click (<code>click_logs</code>)</span>
-                    <span class="text-xs font-medium text-gray-500 bg-white px-2.5 py-0.5 rounded-full border border-gray-200">{{ click_logs|length }} lượt</span>
+            <!-- TABLE 2: CLICK LOGS -->
+            <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
+                    <div>
+                        <span class="text-sm font-semibold text-gray-900">Nhật ký truy cập</span>
+                        <span class="hidden sm:inline-block ml-2 text-xs font-mono-code text-gray-400">click_logs</span>
+                    </div>
+                    <span class="text-xs font-mono-code text-gray-500">{{ click_logs|length }} events</span>
                 </div>
 
                 {% if click_logs %}
-                    <!-- Giao diện Thẻ trên Điện thoại -->
+                    <!-- Mobile Card View -->
                     <div class="md:hidden divide-y divide-gray-200">
                         {% for lg in click_logs %}
                         <div class="p-4 space-y-1.5">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-gray-900 text-sm">{{ lg.name }}</span>
-                                <span class="text-xs font-semibold text-red-600">{{ lg.clicked_at }}</span>
+                                <span class="font-medium text-gray-900 text-sm">{{ lg.name }}</span>
+                                <span class="text-xs font-mono-code text-red-600">{{ lg.clicked_at }}</span>
                             </div>
                             <div class="flex items-center justify-between text-xs text-gray-500">
                                 <span>{{ lg.email }} ({{ lg.department }})</span>
-                                <span class="font-mono text-gray-700">IP: {{ lg.ip }}</span>
+                                <span class="font-mono-code text-gray-700">{{ lg.ip }}</span>
                             </div>
-                            <p class="text-xs text-gray-400 break-all pt-1">{{ lg.user_agent }}</p>
+                            <p class="text-xs text-gray-400 break-all pt-1 font-mono-code">{{ lg.user_agent }}</p>
                         </div>
                         {% endfor %}
                     </div>
 
-                    <!-- Giao diện Bảng trên Máy tính -->
+                    <!-- Desktop Table View -->
                     <div class="hidden md:block overflow-x-auto">
                         <table class="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
+                            <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="py-3 px-4 text-left">ID</th>
-                                    <th class="py-3 px-4 text-left">Thời Gian Click</th>
-                                    <th class="py-3 px-4 text-left">Nhân Viên</th>
-                                    <th class="py-3 px-4 text-left">Phòng Ban</th>
-                                    <th class="py-3 px-4 text-left">Địa Chỉ IP</th>
-                                    <th class="py-3 px-4 text-left">Thiết Bị (User-Agent)</th>
+                                    <th class="py-3 px-5 text-left label-micro">ID</th>
+                                    <th class="py-3 px-5 text-left label-micro">Thời gian</th>
+                                    <th class="py-3 px-5 text-left label-micro">Nhân sự</th>
+                                    <th class="py-3 px-5 text-left label-micro">Phòng ban</th>
+                                    <th class="py-3 px-5 text-left label-micro">Địa chỉ IP</th>
+                                    <th class="py-3 px-5 text-left label-micro">User-Agent</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-gray-100">
+                            <tbody class="divide-y divide-gray-100 bg-white">
                                 {% for lg in click_logs %}
                                 <tr class="hover:bg-gray-50 transition">
-                                    <td class="py-3 px-4 font-mono text-xs text-gray-500">#{{ lg.id }}</td>
-                                    <td class="py-3 px-4 text-xs font-semibold text-red-600 whitespace-nowrap">{{ lg.clicked_at }}</td>
-                                    <td class="py-3 px-4">
+                                    <td class="py-3.5 px-5 font-mono-code text-xs text-gray-400">#{{ lg.id }}</td>
+                                    <td class="py-3.5 px-5 text-xs font-mono-code text-red-600 whitespace-nowrap">{{ lg.clicked_at }}</td>
+                                    <td class="py-3.5 px-5">
                                         <div class="font-medium text-gray-900">{{ lg.name }}</div>
-                                        <div class="text-xs text-gray-500">{{ lg.email }}</div>
+                                        <div class="text-xs text-gray-500 font-mono-code">{{ lg.email }}</div>
                                     </td>
-                                    <td class="py-3 px-4 text-gray-700">{{ lg.department }}</td>
-                                    <td class="py-3 px-4 font-mono text-xs text-gray-700">{{ lg.ip }}</td>
-                                    <td class="py-3 px-4 text-xs text-gray-500 break-all max-w-md">{{ lg.user_agent }}</td>
+                                    <td class="py-3.5 px-5 text-xs text-gray-600">{{ lg.department }}</td>
+                                    <td class="py-3.5 px-5 font-mono-code text-xs text-gray-700">{{ lg.ip }}</td>
+                                    <td class="py-3.5 px-5 text-xs text-gray-400 font-mono-code break-all max-w-md">{{ lg.user_agent }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
                     </div>
                 {% else %}
-                    <div class="py-6 px-4 text-center text-gray-500 text-sm">
-                        Chưa có lượt click nào được ghi nhận.
+                    <div class="py-10 px-4 text-center text-gray-400 text-sm">
+                        Chưa có sự kiện click nào được ghi nhận.
                     </div>
                 {% endif %}
             </div>
 
         </main>
 
-        <!-- Thông báo nổi (Toast) khi Copy Link -->
-        <div id="copyToast" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 z-50 hidden bg-gray-900 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-full shadow-lg">
-            ✅ Đã sao chép liên kết rút gọn!
+        <!-- Minimal Toast -->
+        <div id="copyToast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 hidden bg-black text-white text-xs font-medium px-4 py-2 rounded">
+            Đã sao chép liên kết vào bộ nhớ tạm
         </div>
 
         <script>
@@ -1781,7 +1829,6 @@ def dashboard():
                 var reader = new FileReader();
                 reader.onload = function(e) {
                     var content = e.target.result || '';
-                    // Xóa BOM UTF-8 nếu có
                     if (content.charCodeAt(0) === 0xFEFF) {
                         content = content.slice(1);
                     }
@@ -1827,11 +1874,11 @@ def dashboard():
                             email: rawEmail,
                             department: rawDept || 'Chưa phân loại',
                             valid: valid,
-                            checked: valid // Mặc định tick hết tất cả các mail đúng định dạng
+                            checked: valid
                         });
                     }
 
-                    document.getElementById('csvFileNameTitle').textContent = '📄 File: ' + file.name;
+                    document.getElementById('csvFileNameTitle').textContent = file.name;
                     document.getElementById('csvSearchInput').value = '';
                     document.getElementById('csvPreviewSection').classList.remove('hidden');
                     renderCsvTable();
@@ -1853,26 +1900,26 @@ def dashboard():
                         if (!match) continue;
                     }
 
-                    var rowBg = u.valid ? 'hover:bg-indigo-50 cursor-pointer' : 'bg-red-50 opacity-75';
+                    var rowBg = u.valid ? 'hover:bg-gray-50 cursor-pointer' : 'bg-gray-50 opacity-60';
                     var badge = u.valid
-                        ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">✅ Hợp lệ</span>'
-                        : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">⚠️ Sai định dạng</span>';
+                        ? '<span class="inline-flex items-center gap-1.5 text-xs text-gray-600"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>Hợp lệ</span>'
+                        : '<span class="inline-flex items-center gap-1.5 text-xs text-red-600"><span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>Sai định dạng</span>';
 
                     html += '<tr class="' + rowBg + ' transition" onclick="toggleCsvRow(' + u.index + ', event)">' +
                         '<td class="py-2.5 px-3 text-center">' +
-                            '<input type="checkbox" class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" ' +
+                            '<input type="checkbox" class="w-4 h-4 rounded border-gray-300" ' +
                             (u.checked ? 'checked ' : '') +
                             'onclick="event.stopPropagation(); onCsvCheckboxChange(' + u.index + ', this.checked)">' +
                         '</td>' +
                         '<td class="py-2.5 px-3 font-medium text-gray-900">' + escapeHtml(u.name) + '</td>' +
-                        '<td class="py-2.5 px-3 font-mono text-xs text-gray-700">' + escapeHtml(u.email) + '</td>' +
-                        '<td class="py-2.5 px-3 text-gray-600">' + escapeHtml(u.department) + '</td>' +
+                        '<td class="py-2.5 px-3 font-mono-code text-xs text-gray-600">' + escapeHtml(u.email) + '</td>' +
+                        '<td class="py-2.5 px-3 text-gray-500">' + escapeHtml(u.department) + '</td>' +
                         '<td class="py-2.5 px-3 whitespace-nowrap">' + badge + '</td>' +
                     '</tr>';
                 }
 
                 if (!html) {
-                    html = '<tr><td colspan="5" class="py-6 text-center text-gray-500 text-xs">Không tìm thấy user nào khớp từ khóa lọc.</td></tr>';
+                    html = '<tr><td colspan="5" class="py-8 text-center text-gray-400 text-xs">Không tìm thấy kết quả phù hợp.</td></tr>';
                 }
 
                 tbody.innerHTML = html;
@@ -1913,9 +1960,9 @@ def dashboard():
                     if (scannedCsvUsers[i].checked) selectedCount++;
                 }
                 document.getElementById('csvStatsBadge').textContent =
-                    'Tổng quét: ' + total + ' | Hợp lệ: ' + validCount + ' | Đang chọn: ' + selectedCount;
+                    total + ' rows · ' + validCount + ' valid · ' + selectedCount + ' selected';
                 document.getElementById('csvSubmitBtnText').textContent =
-                    'Thêm Các User Đã Chọn (' + selectedCount + ')';
+                    'Thêm các user đã chọn (' + selectedCount + ')';
             }
 
             function closeCsvPreview() {
