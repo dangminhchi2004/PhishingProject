@@ -907,172 +907,324 @@ def dashboard():
     <html lang="vi">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Quản Trị Chiến Dịch Phishing (Admin Only)</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>Quản Trị Chiến Dịch Phishing</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <style>
+            body { -webkit-tap-highlight-color: transparent; }
+            .drawer-backdrop { background-color: rgba(17, 24, 39, 0.6); backdrop-filter: blur(2px); }
+        </style>
     </head>
-    <body class="bg-gray-50 p-4 md:p-8">
-        <div class="max-w-7xl mx-auto space-y-6">
+    <body class="bg-gray-100 min-h-screen pb-10">
 
-            <!-- Header & Các nút điều khiển chính -->
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-xl shadow-sm border border-gray-200 gap-4">
-                <div>
-                    <div class="flex items-center gap-3">
-                        <h1 class="text-2xl md:text-3xl font-extrabold text-gray-900">Quản Trị Chiến Dịch Phishing</h1>
-                        <span class="text-xs font-semibold text-green-700 bg-green-100 px-3 py-1 rounded-full border border-green-300">
-                            ● Aiven PostgreSQL Connected
-                        </span>
-                        <span class="text-xs font-semibold text-blue-700 bg-blue-100 px-3 py-1 rounded-full border border-blue-300">
-                            🛡️ Admin Mode
-                        </span>
+        <!-- Thanh Navigation Cố Định (Sticky Top Header) tối ưu cho cả Mobile & Desktop -->
+        <header class="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
+            <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
+                <!-- Logo & Tên hệ thống -->
+                <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-sm flex-shrink-0">
+                        🛡️
                     </div>
-                    <p class="text-sm text-gray-500 mt-1">
-                        Domain liên kết rút gọn: <code class="bg-gray-100 px-2 py-0.5 rounded text-blue-600 font-mono">{{ base_url }}/{{ tracking_path }}/&lt;token&gt;</code>
-                    </p>
+                    <div class="truncate">
+                        <div class="flex items-center gap-2">
+                            <h1 class="text-base sm:text-xl font-extrabold text-gray-900 truncate">Phishing Admin</h1>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700 border border-green-300">
+                                ● Online
+                            </span>
+                        </div>
+                        <p class="hidden sm:block text-xs text-gray-500 truncate">
+                            Link rút gọn: <code class="text-blue-600 font-mono">{{ base_url }}/{{ tracking_path }}/&lt;token&gt;</code>
+                        </p>
+                    </div>
                 </div>
 
-                <div class="flex flex-wrap gap-2">
+                <!-- Cụm nút hành động bên phải -->
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    <!-- Nút Gửi Tất Cả (Luôn hiển thị trên cả Điện thoại & Máy tính) -->
                     <form action="/campaign/send-all" method="POST" class="inline">
-                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition shadow">
-                            🚀 Gửi Email Tất Cả
+                        <button type="submit" class="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 font-semibold text-xs sm:text-sm transition shadow-sm">
+                            <span>🚀</span>
+                            <span>Gửi Tất Cả</span>
                         </button>
                     </form>
 
-                    <form action="/db/clear-clicks" method="POST" class="inline" onsubmit="return confirm('Bạn muốn xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
-                        <button type="submit" class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold text-sm transition shadow">
-                            🧹 Reset Lịch Sử Click
+                    <!-- Các nút phụ chỉ hiện trên màn hình Máy tính (Desktop >= lg) -->
+                    <div class="hidden lg:flex items-center gap-2">
+                        <button type="button" onclick="toggleDrawer(true)" class="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-semibold text-xs sm:text-sm border border-gray-300 transition">
+                            <span>⚙️</span>
+                            <span>Cài Đặt</span>
                         </button>
-                    </form>
 
-                    <form action="/db/clear-all" method="POST" class="inline" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click trong Database?');">
-                        <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-sm transition shadow">
-                            🔥 Clear Toàn Bộ DB
-                        </button>
-                    </form>
+                        <form action="/db/clear-clicks" method="POST" class="inline" onsubmit="return confirm('Xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
+                            <button type="submit" class="px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold text-xs sm:text-sm transition shadow-sm">
+                                🧹 Reset Click
+                            </button>
+                        </form>
 
-                    <a href="/logout" class="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 font-semibold text-sm transition shadow">
-                        🔒 Đăng Xuất
-                    </a>
+                        <form action="/db/clear-all" method="POST" class="inline" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click?');">
+                            <button type="submit" class="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-xs sm:text-sm transition shadow-sm">
+                                🔥 Clear DB
+                            </button>
+                        </form>
+
+                        <a href="/logout" class="px-3 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-semibold text-xs sm:text-sm transition shadow-sm">
+                            🔒 Thoát
+                        </a>
+                    </div>
+
+                    <!-- Nút Icon Menu (Hamburger / Gear) cho Điện thoại & Tablet (< lg) -->
+                    <button type="button" onclick="toggleDrawer(true)"
+                        class="lg:hidden inline-flex items-center justify-center p-2 rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 focus:outline-none"
+                        aria-label="Mở menu cài đặt">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
+        </header>
+
+        <!-- Menu Trượt (Drawer / Modal) chứa Cài đặt Webhook, Đổi mật khẩu & Xóa DB (Ẩn mặc định, mở khi bấm Icon Menu) -->
+        <div id="settingsDrawer" class="fixed inset-0 z-50 hidden">
+            <!-- Lớp nền mờ -->
+            <div class="fixed inset-0 drawer-backdrop transition-opacity" onclick="toggleDrawer(false)"></div>
+
+            <!-- Khung nội dung Menu bên phải -->
+            <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
+                <div class="w-screen max-w-md bg-white shadow-2xl flex flex-col justify-between overflow-y-auto">
+                    <div>
+                        <!-- Header của Menu -->
+                        <div class="p-4 sm:p-5 bg-gray-900 text-white flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-lg">⚙️</span>
+                                <h2 class="text-base font-bold">Menu Cài Đặt &amp; Quản Trị</h2>
+                            </div>
+                            <button type="button" onclick="toggleDrawer(false)" class="p-1.5 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="p-4 sm:p-5 space-y-6">
+                            <!-- 1. Cấu hình HTTPS Gmail Webhook -->
+                            <div class="bg-blue-50 p-4 rounded-xl border border-blue-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h3 class="text-xs font-bold text-blue-900 uppercase">⚡ Gửi Mail HTTPS (Webhook)</h3>
+                                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full {% if saved_webhook %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                        {% if saved_webhook %}Đã bật{% else %}Chưa bật{% endif %}
+                                    </span>
+                                </div>
+                                <p class="text-xs text-blue-700 mb-3">
+                                    Link Google Apps Script giúp gửi mail HTML &amp; Hyperlink từ Render:
+                                </p>
+                                <form action="/settings/webhook" method="POST" class="space-y-2">
+                                    <input type="url" name="webhook_url" value="{{ saved_webhook }}"
+                                        placeholder="https://script.google.com/macros/s/.../exec"
+                                        class="w-full px-3 py-2 border border-blue-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <button type="submit" class="w-full py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 text-xs transition shadow-sm">
+                                        💾 Lưu Webhook URL
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- 2. Đổi mật khẩu Admin -->
+                            <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                <h3 class="text-xs font-bold text-gray-800 uppercase mb-1">🔑 Đổi Mật Khẩu Admin</h3>
+                                <p class="text-xs text-gray-500 mb-3">Mật khẩu bảo vệ trang Quản trị (Mặc định: <code>admin123</code>)</p>
+                                <form action="/settings/password" method="POST" class="flex gap-2">
+                                    <input type="password" name="new_password" required placeholder="Nhập mật khẩu mới..."
+                                        class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <button type="submit" class="px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 text-xs transition whitespace-nowrap">
+                                        Cập Nhật
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- 3. Quản lý & Làm sạch Database -->
+                            <div class="space-y-2.5 pt-2 border-t border-gray-200">
+                                <h3 class="text-xs font-bold text-gray-500 uppercase">🗄️ Công Cụ Dữ Liệu (Database)</h3>
+
+                                <form action="/db/clear-clicks" method="POST" onsubmit="return confirm('Bạn muốn xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
+                                    <button type="submit" class="w-full py-2.5 px-4 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition">
+                                        <span>🧹</span>
+                                        <span>Reset Lịch Sử Click (Giữ lại User)</span>
+                                    </button>
+                                </form>
+
+                                <form action="/db/clear-all" method="POST" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click trong Database?');">
+                                    <button type="submit" class="w-full py-2.5 px-4 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition">
+                                        <span>🔥</span>
+                                        <span>Xóa Trắng Toàn Bộ Database</span>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Footer của Menu: Nút Đăng Xuất -->
+                    <div class="p-4 border-t border-gray-200 bg-gray-50">
+                        <a href="/logout" class="w-full py-2.5 px-4 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-semibold text-xs flex items-center justify-center gap-2 shadow transition">
+                            <span>🔒</span>
+                            <span>Đăng Xuất Khỏi Admin</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Nội dung chính -->
+        <main class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-4 sm:space-y-6">
 
             <!-- Thông báo trạng thái (Alert) -->
             {% if msg %}
-            <div class="p-4 rounded-xl border {% if status == 'error' %}bg-red-50 border-red-300 text-red-800{% else %}bg-green-50 border-green-300 text-green-800{% endif %} flex justify-between items-center shadow-sm">
-                <div class="text-sm font-medium">
+            <div class="p-3.5 sm:p-4 rounded-xl border {% if status == 'error' %}bg-red-50 border-red-300 text-red-800{% else %}bg-green-50 border-green-300 text-green-800{% endif %} flex justify-between items-start sm:items-center gap-3 shadow-sm">
+                <div class="text-xs sm:text-sm font-medium leading-relaxed">
                     {% if status == 'error' %}⚠️ {% else %}✅ {% endif %}{{ msg }}
                 </div>
-                <a href="/dashboard" class="text-xs font-bold underline ml-4">Đóng</a>
+                <a href="/dashboard" class="text-xs font-bold underline flex-shrink-0">Đóng</a>
             </div>
             {% endif %}
 
-            <!-- Thống kê tổng quan -->
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs uppercase font-semibold text-gray-500">Tổng Số User (Bảng users)</p>
-                    <p class="text-3xl font-extrabold text-gray-900 mt-1">{{ total_users }}</p>
+            <!-- Thống kê tổng quan: Lưới 2x2 trên Điện thoại, 4 cột trên Máy tính -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Tổng User</p>
+                    <p class="text-2xl sm:text-3xl font-extrabold text-gray-900 mt-1">{{ total_users }}</p>
                 </div>
-                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs uppercase font-semibold text-gray-500">User Đã Sập Bẫy</p>
-                    <p class="text-3xl font-extrabold text-red-600 mt-1">{{ clicked_users }}</p>
+                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Đã Sập Bẫy</p>
+                    <p class="text-2xl sm:text-3xl font-extrabold text-red-600 mt-1">{{ clicked_users }}</p>
                 </div>
-                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs uppercase font-semibold text-gray-500">Tỷ Lệ Click (Click Rate)</p>
-                    <p class="text-3xl font-extrabold text-blue-600 mt-1">{{ '{:.1f}'.format(click_rate) }}%</p>
+                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Tỷ Lệ Click</p>
+                    <p class="text-2xl sm:text-3xl font-extrabold text-blue-600 mt-1">{{ '{:.1f}'.format(click_rate) }}%</p>
                 </div>
-                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-                    <p class="text-xs uppercase font-semibold text-gray-500">Tổng Lượt Click (Bảng click_logs)</p>
-                    <p class="text-3xl font-extrabold text-purple-600 mt-1">{{ click_logs|length }}</p>
-                </div>
-            </div>
-
-            <!-- Cấu hình Webhook HTTPS & Đổi mật khẩu Admin -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="md:col-span-2 bg-blue-50 p-5 rounded-xl shadow-sm border border-blue-200">
-                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-3">
-                        <div>
-                            <h2 class="text-sm font-bold text-blue-900">
-                                ⚡ Cấu Hình Gửi Mail HTTPS (Google Apps Script Webhook)
-                            </h2>
-                            <p class="text-xs text-blue-700 mt-0.5">
-                                Hỗ trợ gửi mail định dạng HTML &amp; Hyperlink trực tiếp từ Render:
-                            </p>
-                        </div>
-                        <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full {% if saved_webhook %}bg-green-100 text-green-800 border border-green-300{% else %}bg-yellow-100 text-yellow-800 border border-yellow-300{% endif %}">
-                            {% if saved_webhook %}✅ Đang bật HTTPS Webhook{% else %}⚠️ Chưa lưu Webhook{% endif %}
-                        </span>
-                    </div>
-                    <form action="/settings/webhook" method="POST" class="flex gap-2">
-                        <input type="url" name="webhook_url" value="{{ saved_webhook }}"
-                            placeholder="Dán link https://script.google.com/macros/s/.../exec vào đây"
-                            class="flex-1 px-3 py-2 border border-blue-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button type="submit" class="px-4 py-2 bg-blue-700 text-white font-semibold rounded-lg hover:bg-blue-800 text-xs transition shadow whitespace-nowrap">
-                            💾 Lưu Webhook
-                        </button>
-                    </form>
-                </div>
-
-                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-                    <h2 class="text-sm font-bold text-gray-800 mb-1">🔑 Đổi Mật Khẩu Admin</h2>
-                    <p class="text-xs text-gray-500 mb-3">Bảo vệ trang Dashboard (Mặc định: <code>admin123</code>)</p>
-                    <form action="/settings/password" method="POST" class="flex gap-2">
-                        <input type="password" name="new_password" required placeholder="Mật khẩu mới..."
-                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button type="submit" class="px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 text-xs transition shadow whitespace-nowrap">
-                            Cập Nhật
-                        </button>
-                    </form>
+                <div class="bg-white p-3.5 sm:p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase truncate">Lượt Click</p>
+                    <p class="text-2xl sm:text-3xl font-extrabold text-purple-600 mt-1">{{ click_logs|length }}</p>
                 </div>
             </div>
 
             <!-- Form thêm User trực tiếp vào Database -->
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                <h2 class="text-lg font-bold text-gray-800 mb-4">➕ Thêm User Mới Trực Tiếp Vào Database</h2>
-                <form action="/users/add" method="POST" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div class="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200">
+                <h2 class="text-sm sm:text-base font-bold text-gray-800 mb-3">➕ Thêm User Mục Tiêu Mới</h2>
+                <form action="/users/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 uppercase mb-1">Họ và Tên *</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Họ và Tên *</label>
                         <input type="text" name="name" required placeholder="VD: Nguyễn Văn A"
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 uppercase mb-1">Địa chỉ Email *</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Địa chỉ Email *</label>
                         <input type="email" name="email" required placeholder="VD: nguyenvana@gmail.com"
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 uppercase mb-1">Phòng Ban / Bộ Phận</label>
-                        <input type="text" name="department" placeholder="VD: CNTT / Kế Toán / Nhân Sự"
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Phòng Ban</label>
+                        <input type="text" name="department" placeholder="VD: CNTT / Kế Toán"
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                     <div>
-                        <button type="submit" class="w-full py-2 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 text-sm transition shadow">
-                            ➕ Lưu Vào Bảng Users
+                        <button type="submit" class="w-full py-2.5 sm:py-2 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 active:bg-green-800 text-sm transition shadow-sm">
+                            ➕ Lưu Vào DB
                         </button>
                     </div>
                 </form>
             </div>
 
-            <!-- Bảng 1: Danh sách Users -->
+            <!-- BẢNG 1: DANH SÁCH MỤC TIÊU (Tự động chuyển đổi Thẻ trên Mobile & Bảng trên Desktop) -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                    <span class="font-bold text-gray-800">📋 Bảng 1: Danh Sách Mục Tiêu (Bảng <code>users</code>)</span>
-                    <span class="text-xs text-gray-500">{{ total_users }} bản ghi</span>
+                <div class="px-4 py-3.5 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                    <span class="font-bold text-gray-800 text-sm sm:text-base">📋 Danh Sách Mục Tiêu (<code>users</code>)</span>
+                    <span class="text-xs font-medium text-gray-500 bg-white px-2.5 py-0.5 rounded-full border border-gray-200">{{ total_users }} user</span>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200 text-sm">
-                        <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
-                            <tr>
-                                <th class="py-3 px-4 text-left">ID</th>
-                                <th class="py-3 px-4 text-left">Họ Tên &amp; Email</th>
-                                <th class="py-3 px-4 text-left">Phòng Ban</th>
-                                <th class="py-3 px-4 text-left">Trạng Thái</th>
-                                <th class="py-3 px-4 text-left">IP &amp; Thời Gian Click</th>
-                                <th class="py-3 px-4 text-left">Link Rút Gọn</th>
-                                <th class="py-3 px-4 text-right">Thao Tác</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100">
-                            {% if user_list %}
+
+                {% if user_list %}
+                    <!-- Giao diện Thẻ (Card View) dành cho Điện thoại (Mobile < md) -->
+                    <div class="md:hidden divide-y divide-gray-200">
+                        {% for u in user_list %}
+                        <div class="p-4 space-y-3">
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-xs font-mono text-gray-400">#{{ u.id }}</span>
+                                        <h3 class="font-bold text-gray-900 text-sm truncate">{{ u.name }}</h3>
+                                    </div>
+                                    <p class="text-xs text-gray-600 truncate mt-0.5">{{ u.email }}</p>
+                                    <span class="inline-block mt-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                                        🏢 {{ u.department }}
+                                    </span>
+                                </div>
+                                <div class="flex-shrink-0">
+                                    {% if u.clicked %}
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">
+                                            ⚠️ ĐÃ CLICK
+                                        </span>
+                                    {% else %}
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800">
+                                            🛡️ AN TOÀN
+                                        </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <div class="text-xs text-gray-500 bg-gray-50 p-2.5 rounded-lg grid grid-cols-2 gap-2">
+                                <div>
+                                    <span class="text-gray-400 block">Gửi mail lúc:</span>
+                                    <span class="font-medium text-gray-700">{{ u.last_sent_at }}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400 block">IP / Lúc click:</span>
+                                    <span class="font-mono text-gray-700">{{ u.ip }}</span>
+                                    {% if u.timestamp != 'N/A' %}
+                                    <span class="block text-red-600">{{ u.timestamp }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <!-- Hàng nút thao tác tối ưu cảm ứng trên Điện thoại -->
+                            <div class="grid grid-cols-3 gap-2 pt-1">
+                                <form action="/users/send/{{ u.id }}" method="POST" class="w-full">
+                                    <button type="submit" class="w-full py-2 px-2 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
+                                        <span>📨</span>
+                                        <span>Gửi Mail</span>
+                                    </button>
+                                </form>
+
+                                <button type="button"
+                                    onclick="copyLink('{{ base_url }}/{{ tracking_path }}/{{ u.token }}')"
+                                    class="w-full py-2 px-2 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 border border-gray-300 rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
+                                    <span>📋</span>
+                                    <span>Copy Link</span>
+                                </button>
+
+                                <form action="/users/delete/{{ u.id }}" method="POST" class="w-full" onsubmit="return confirm('Xóa user {{ u.email }}?');">
+                                    <button type="submit" class="w-full py-2 px-2 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-700 border border-red-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-1">
+                                        <span>🗑️</span>
+                                        <span>Xóa</span>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Giao diện Bảng (Table View) dành cho Máy tính (Desktop >= md) -->
+                    <div class="hidden md:block overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
+                                <tr>
+                                    <th class="py-3 px-4 text-left">ID</th>
+                                    <th class="py-3 px-4 text-left">Họ Tên &amp; Email</th>
+                                    <th class="py-3 px-4 text-left">Phòng Ban</th>
+                                    <th class="py-3 px-4 text-left">Trạng Thái</th>
+                                    <th class="py-3 px-4 text-left">IP &amp; Thời Gian Click</th>
+                                    <th class="py-3 px-4 text-left">Link Rút Gọn</th>
+                                    <th class="py-3 px-4 text-right">Thao Tác</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
                                 {% for u in user_list %}
                                 <tr class="hover:bg-gray-50 transition">
                                     <td class="py-3 px-4 text-gray-500 font-mono text-xs">#{{ u.id }}</td>
@@ -1105,7 +1257,7 @@ def dashboard():
                                                 /{{ tracking_path }}/{{ u.token }}
                                             </a>
                                             <button type="button"
-                                                onclick="navigator.clipboard.writeText('{{ base_url }}/{{ tracking_path }}/{{ u.token }}'); alert('Đã copy link rút gọn: {{ base_url }}/{{ tracking_path }}/{{ u.token }}');"
+                                                onclick="copyLink('{{ base_url }}/{{ tracking_path }}/{{ u.token }}')"
                                                 class="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs border border-gray-300">
                                                 📋 Copy
                                             </button>
@@ -1113,50 +1265,67 @@ def dashboard():
                                     </td>
                                     <td class="py-3 px-4 text-right whitespace-nowrap space-x-1">
                                         <form action="/users/send/{{ u.id }}" method="POST" class="inline">
-                                            <button type="submit" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-xs font-medium">
+                                            <button type="submit" class="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold">
                                                 📨 Gửi Mail
                                             </button>
                                         </form>
                                         <form action="/users/delete/{{ u.id }}" method="POST" class="inline" onsubmit="return confirm('Xóa user {{ u.email }}?');">
-                                            <button type="submit" class="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded text-xs font-medium">
+                                            <button type="submit" class="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-semibold">
                                                 🗑️ Xóa
                                             </button>
                                         </form>
                                     </td>
                                 </tr>
                                 {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="7" class="py-8 text-center text-gray-500">
-                                        Chưa có User nào trong Database. Hãy nhập thông tin ở khung <strong>Thêm User Mới</strong> bên trên!
-                                    </td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="py-8 px-4 text-center text-gray-500 text-sm">
+                        Chưa có User nào trong Database. Hãy nhập thông tin ở khung <strong>Thêm User Mục Tiêu Mới</strong> bên trên!
+                    </div>
+                {% endif %}
             </div>
 
-            <!-- Bảng 2: Lịch sử Click chi tiết (click_logs) -->
+            <!-- BẢNG 2: NHẬT KÝ LƯỢT CLICK CHI TIẾT -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                    <span class="font-bold text-gray-800">🕒 Bảng 2: Nhật Ký Lượt Click Chi Tiết (Bảng <code>click_logs</code>)</span>
-                    <span class="text-xs text-gray-500">{{ click_logs|length }} lượt ghi nhận</span>
+                <div class="px-4 py-3.5 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                    <span class="font-bold text-gray-800 text-sm sm:text-base">🕒 Nhật Ký Lượt Click (<code>click_logs</code>)</span>
+                    <span class="text-xs font-medium text-gray-500 bg-white px-2.5 py-0.5 rounded-full border border-gray-200">{{ click_logs|length }} lượt</span>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200 text-sm">
-                        <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
-                            <tr>
-                                <th class="py-3 px-4 text-left">ID Log</th>
-                                <th class="py-3 px-4 text-left">Thời Gian Click</th>
-                                <th class="py-3 px-4 text-left">Nhân Viên</th>
-                                <th class="py-3 px-4 text-left">Phòng Ban</th>
-                                <th class="py-3 px-4 text-left">Địa Chỉ IP</th>
-                                <th class="py-3 px-4 text-left">Trình Duyệt / Thiết Bị (User-Agent)</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100">
-                            {% if click_logs %}
+
+                {% if click_logs %}
+                    <!-- Giao diện Thẻ trên Điện thoại -->
+                    <div class="md:hidden divide-y divide-gray-200">
+                        {% for lg in click_logs %}
+                        <div class="p-4 space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <span class="font-bold text-gray-900 text-sm">{{ lg.name }}</span>
+                                <span class="text-xs font-semibold text-red-600">{{ lg.clicked_at }}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-xs text-gray-500">
+                                <span>{{ lg.email }} ({{ lg.department }})</span>
+                                <span class="font-mono text-gray-700">IP: {{ lg.ip }}</span>
+                            </div>
+                            <p class="text-xs text-gray-400 break-all pt-1">{{ lg.user_agent }}</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Giao diện Bảng trên Máy tính -->
+                    <div class="hidden md:block overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead class="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
+                                <tr>
+                                    <th class="py-3 px-4 text-left">ID</th>
+                                    <th class="py-3 px-4 text-left">Thời Gian Click</th>
+                                    <th class="py-3 px-4 text-left">Nhân Viên</th>
+                                    <th class="py-3 px-4 text-left">Phòng Ban</th>
+                                    <th class="py-3 px-4 text-left">Địa Chỉ IP</th>
+                                    <th class="py-3 px-4 text-left">Thiết Bị (User-Agent)</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
                                 {% for lg in click_logs %}
                                 <tr class="hover:bg-gray-50 transition">
                                     <td class="py-3 px-4 font-mono text-xs text-gray-500">#{{ lg.id }}</td>
@@ -1170,19 +1339,51 @@ def dashboard():
                                     <td class="py-3 px-4 text-xs text-gray-500 break-all max-w-md">{{ lg.user_agent }}</td>
                                 </tr>
                                 {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="6" class="py-6 text-center text-gray-500">
-                                        Chưa có lượt click nào được ghi nhận.
-                                    </td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="py-6 px-4 text-center text-gray-500 text-sm">
+                        Chưa có lượt click nào được ghi nhận.
+                    </div>
+                {% endif %}
             </div>
 
+        </main>
+
+        <!-- Thông báo nổi (Toast) khi Copy Link -->
+        <div id="copyToast" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 z-50 hidden bg-gray-900 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-full shadow-lg">
+            ✅ Đã sao chép liên kết rút gọn!
         </div>
+
+        <script>
+            function toggleDrawer(show) {
+                var drawer = document.getElementById('settingsDrawer');
+                if (show) {
+                    drawer.classList.remove('hidden');
+                } else {
+                    drawer.classList.add('hidden');
+                }
+            }
+
+            function copyLink(url) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(url);
+                } else {
+                    var temp = document.createElement('input');
+                    document.body.appendChild(temp);
+                    temp.value = url;
+                    temp.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(temp);
+                }
+                var toast = document.getElementById('copyToast');
+                toast.classList.remove('hidden');
+                setTimeout(function() {
+                    toast.classList.add('hidden');
+                }, 2200);
+            }
+        </script>
     </body>
     </html>
     """
