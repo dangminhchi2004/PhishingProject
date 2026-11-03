@@ -133,25 +133,49 @@ engine = None
 Session = None
 last_db_error = ""
 
-def clean_db_url(url_str):
-    """Làm sạch chuỗi DATABASE_URL phòng trường hợp dính dấu ngoặc kép, khoảng trắng hoặc tiền tố thừa"""
+def ensure_pg_driver():
+    """Đảm bảo thư viện kết nối PostgreSQL (psycopg2 hoặc psycopg) luôn có sẵn"""
+    for mod_name in ("psycopg2", "psycopg"):
+        try:
+            __import__(mod_name)
+            return mod_name
+        except ImportError:
+            pass
+    # Tự động cài đặt nếu môi trường thiếu driver
+    try:
+        import subprocess
+        safe_log("[AUTO-INSTALL] Đang tự động cài đặt driver PostgreSQL...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "psycopg2-binary", "psycopg[binary]"])
+        for mod_name in ("psycopg2", "psycopg"):
+            try:
+                __import__(mod_name)
+                return mod_name
+            except ImportError:
+                pass
+    except Exception as e:
+        safe_log(f"[AUTO-INSTALL INFO] {e}")
+    return "psycopg2"
+
+def clean_db_url(url_str, driver="psycopg2"):
+    """Làm sạch chuỗi DATABASE_URL và tự động gán đúng driver PostgreSQL hiện có"""
     if not url_str:
         return ""
     s = str(url_str).strip().strip('"').strip("'")
-    # Nếu người dùng copy cả chữ "link db: postgres://..." thì cắt từ chữ postgres
     idx = s.find("postgres")
     if idx > 0:
         s = s[idx:]
-    if s.startswith("postgres://"):
-        s = s.replace("postgres://", "postgresql://", 1)
+    if "://" in s:
+        _, rest = s.split("://", 1)
+        s = f"postgresql+{driver}://{rest}"
     return s
 
 def init_database():
     global engine, Session, last_db_error
+    active_driver = ensure_pg_driver()
     # Danh sách các URL ứng viên theo thứ tự ưu tiên (nếu biến môi trường bị sai cú pháp sẽ tự động dùng _FALLBACK_DB)
     candidates = []
     for raw in [os.environ.get('DATABASE_URL', ''), config.get("database_url", ""), _FALLBACK_DB]:
-        cleaned = clean_db_url(raw)
+        cleaned = clean_db_url(raw, driver=active_driver)
         if cleaned and cleaned not in candidates:
             candidates.append(cleaned)
 
