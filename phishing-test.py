@@ -1219,13 +1219,6 @@ def dashboard():
 
                 <!-- Actions -->
                 <div class="flex items-center gap-2 flex-shrink-0">
-                    <!-- Primary CTA: Send Campaign -->
-                    <form action="/campaign/send-all" method="POST" class="inline">
-                        <button type="submit" class="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 btn-ink rounded text-xs font-medium tracking-wide transition">
-                            <span>Gửi chiến dịch</span>
-                        </button>
-                    </form>
-
                     <!-- Secondary Actions (Desktop >= lg) -->
                     <div class="hidden lg:flex items-center gap-2">
                         <button type="button" onclick="toggleDrawer(true)" class="px-3.5 py-2 btn-outline rounded text-xs font-medium transition">
@@ -1511,12 +1504,18 @@ def dashboard():
 
             <!-- TABLE 1: TARGET USERS -->
             <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
-                <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
-                    <div>
+                <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center gap-3">
+                    <div class="flex items-center gap-2 min-w-0">
                         <span class="text-sm font-semibold text-gray-900">Danh sách mục tiêu</span>
-                        <span class="hidden sm:inline-block ml-2 text-xs font-mono-code text-gray-400">users</span>
+                        <span class="hidden sm:inline-block text-xs font-mono-code text-gray-400">({{ total_users }})</span>
                     </div>
-                    <span class="text-xs font-mono-code text-gray-500">{{ total_users }} records</span>
+                    <div class="flex items-center gap-3 flex-shrink-0">
+                        <form action="/campaign/send-all" method="POST" class="inline">
+                            <button type="submit" class="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 btn-ink rounded text-xs font-medium tracking-wide transition">
+                                <span>Gửi mail cho tất cả</span>
+                            </button>
+                        </form>
+                    </div>
                 </div>
 
                 {% if user_list %}
