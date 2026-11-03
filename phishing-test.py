@@ -131,24 +131,70 @@ class ClickLog(Base):
 
 engine = None
 Session = None
+last_db_error = ""
+
+def clean_db_url(url_str):
+    """Làm sạch chuỗi DATABASE_URL phòng trường hợp dính dấu ngoặc kép, khoảng trắng hoặc tiền tố thừa"""
+    if not url_str:
+        return ""
+    s = str(url_str).strip().strip('"').strip("'")
+    # Nếu người dùng copy cả chữ "link db: postgres://..." thì cắt từ chữ postgres
+    idx = s.find("postgres")
+    if idx > 0:
+        s = s[idx:]
+    if s.startswith("postgres://"):
+        s = s.replace("postgres://", "postgresql://", 1)
+    return s
 
 def init_database():
-    global engine, Session
-    if raw_db_url:
+    global engine, Session, last_db_error
+    # Danh sách các URL ứng viên theo thứ tự ưu tiên (nếu biến môi trường bị sai cú pháp sẽ tự động dùng _FALLBACK_DB)
+    candidates = []
+    for raw in [os.environ.get('DATABASE_URL', ''), config.get("database_url", ""), _FALLBACK_DB]:
+        cleaned = clean_db_url(raw)
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+
+    for db_url in candidates:
         try:
-            engine = create_engine(
-                raw_db_url,
+            test_engine = create_engine(
+                db_url,
                 pool_pre_ping=True,
                 pool_recycle=180,
                 connect_args={'connect_timeout': 10}
             )
-            Base.metadata.create_all(engine)
+            # Kiểm tra kết nối thực tế
+            with test_engine.connect() as conn:
+                pass
+
+            engine = test_engine
             Session = scoped_session(sessionmaker(bind=engine))
+
+            # Tạo bảng trong khối try riêng để tránh xung đột khi nhiều worker Gunicorn khởi động cùng lúc
+            try:
+                Base.metadata.create_all(engine)
+            except Exception as table_err:
+                safe_log(f"[DB INFO] Bảng đã tồn tại hoặc đang được khởi tạo bởi worker khác: {table_err}")
+
+            last_db_error = ""
             safe_log("[DB OK] Đã kết nối Aiven PostgreSQL (bảng users & click_logs sẵn sàng)!")
+            return True
         except Exception as e:
-            safe_log(f"[DB LỖI] Không thể kết nối Database: {e}")
-            engine = None
-            Session = None
+            last_db_error = str(e)
+            safe_log(f"[DB THỬ LẠI] URL không hợp lệ hoặc lỗi kết nối ({e}), thử URL dự phòng...")
+
+    engine = None
+    Session = None
+    return False
+
+def get_db_session():
+    """Lấy session DB, tự động kết nối lại nếu trước đó bị ngắt"""
+    global Session
+    if Session is None:
+        init_database()
+    if Session is not None:
+        return Session()
+    return None
 
 init_database()
 
@@ -266,17 +312,18 @@ def home():
 @app.route('/users/add', methods=['POST'])
 def add_user():
     """Thêm User mới trực tiếp từ giao diện Web vào bảng users"""
-    if not Session:
-        return redirect(url_for('dashboard', msg="Lỗi: Chưa kết nối được Database!", status="error"))
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
     name = request.form.get('name', '').strip() or 'Nhân viên'
     email = request.form.get('email', '').strip().lower()
     department = request.form.get('department', '').strip() or 'Chưa phân loại'
 
     if not email or '@' not in email:
+        Session.remove()
         return redirect(url_for('dashboard', msg="Vui lòng nhập địa chỉ Email hợp lệ!", status="error"))
 
-    session = Session()
     try:
         existing = session.query(User).filter_by(email=email).first()
         if existing:
@@ -310,10 +357,10 @@ def add_user():
 @app.route('/users/delete/<int:user_id>', methods=['POST'])
 def delete_user(user_id):
     """Xóa 1 user khỏi bảng users"""
-    if not Session:
-        return redirect(url_for('dashboard', msg="Chưa kết nối Database!", status="error"))
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
-    session = Session()
     try:
         u = session.query(User).filter_by(id=user_id).first()
         if u:
@@ -331,13 +378,13 @@ def delete_user(user_id):
 @app.route('/users/send/<int:user_id>', methods=['POST'])
 def send_single_user(user_id):
     """Gửi email cho 1 user cụ thể"""
-    if not Session:
-        return redirect(url_for('dashboard', msg="Chưa kết nối Database!", status="error"))
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
 
-    session = Session()
     try:
         u = session.query(User).filter_by(id=user_id).first()
         if not u:
@@ -361,13 +408,13 @@ def send_single_user(user_id):
 @app.route('/reload', methods=['POST', 'GET'])
 def send_all_users():
     """Gửi email chiến dịch cho toàn bộ user trong bảng users"""
-    if not Session:
-        return redirect(url_for('dashboard', msg="Chưa kết nối Database!", status="error"))
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
 
-    session = Session()
     try:
         users = session.query(User).all()
         if not users:
@@ -406,10 +453,10 @@ def send_all_users():
 @app.route('/db/clear-clicks', methods=['POST'])
 def clear_clicks():
     """Xóa sạch bảng click_logs và đặt lại trạng thái clicked=False cho toàn bộ bảng users"""
-    if not Session:
-        return redirect(url_for('dashboard', msg="Chưa kết nối Database!", status="error"))
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
-    session = Session()
     try:
         session.query(ClickLog).delete()
         users = session.query(User).all()
@@ -429,10 +476,10 @@ def clear_clicks():
 @app.route('/db/clear-all', methods=['POST'])
 def clear_all_tables():
     """Xóa sạch dữ liệu trong cả 2 bảng: users và click_logs"""
-    if not Session:
-        return redirect(url_for('dashboard', msg="Chưa kết nối Database!", status="error"))
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
-    session = Session()
     try:
         session.query(ClickLog).delete()
         session.query(User).delete()
@@ -457,8 +504,8 @@ def handle_click(token):
     user_agent = request.headers.get('User-Agent', 'N/A')
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if Session:
-        session = Session()
+    session = get_db_session()
+    if session:
         try:
             db_user = session.query(User).filter_by(token=token).first()
             if db_user:
@@ -545,8 +592,8 @@ def dashboard():
     user_list = []
     click_logs = []
 
-    if Session:
-        session = Session()
+    session = get_db_session()
+    if session:
         try:
             db_users = session.query(User).order_by(User.id.asc()).all()
             for u in db_users:
@@ -579,6 +626,9 @@ def dashboard():
             status = "error"
         finally:
             Session.remove()
+    elif not msg:
+        msg = f"Không thể kết nối Database: {last_db_error}"
+        status = "error"
 
     total_users = len(user_list)
     clicked_users = sum(1 for u in user_list if u['clicked'])
