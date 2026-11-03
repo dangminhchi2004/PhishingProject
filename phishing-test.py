@@ -1,158 +1,420 @@
-import smtplib
-from email.mime.text import MIMEText
-from flask import Flask, request, redirect, url_for, render_template_string
-import uuid
-import datetime
+import os
+import sys
 import json
+import uuid
+import smtplib
+import datetime
+from email.mime.text import MIMEText
+from email.header import Header
 
-# --- Flask Application Setup ---
+# Đảm bảo mã hóa UTF-8 trên Windows console
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+from flask import Flask, request, redirect, url_for, render_template_string
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime
+from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
+
+# --- Khởi tạo ứng dụng Flask ---
 app = Flask(__name__)
-# Configure SERVER_NAME for generating external URLs outside of a request context
-app.config['SERVER_NAME'] = '127.0.0.1:5000'
-# --- IMPORTANT: REPLACE THIS WITH YOUR ACTUAL PUBLISHED FAKE LANDING PAGE URL ---
-app.config['EXTERNAL_FAKE_LANDING_PAGE_URL'] = 'https://sites.google.com/view/chopda-enterprise-test/home'
 
-# In-memory storage for campaign data (for demonstration purposes)
-campaign_results = {}
-users = {
-    "alice@example.com": "Alice",
-    "bob@example.com": "Bob",
-    "charlie@example.com": "Charlie"
-}
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
+USERS_PATH = os.path.join(BASE_DIR, 'users.json')
 
-# --- Email Simulation Function ---
+# --- Hàm nạp cấu hình (Hỗ trợ biến môi trường & file JSON) ---
+def load_config():
+    default_config = {
+        "database_url": "",
+        "server": {
+            "host": "0.0.0.0",
+            "port": 5000,
+            "base_url": "http://127.0.0.1:5000"
+        },
+        "campaign": {
+            "tracking_path": "/verify/portal-auth",
+            "use_internal_awareness": True,
+            "external_landing_page_url": "https://sites.google.com/view/chopda-enterprise-test/home",
+            "email_subject": "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên",
+            "sender_display_name": "Cổng Thông Tin Nhân Sự",
+            "sender_email": "security-alert@internal-portal.com"
+        },
+        "smtp": {
+            "enabled": False,
+            "server": "smtp.gmail.com",
+            "port": 465,
+            "username": "",
+            "password": ""
+        }
+    }
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+                default_config.update(loaded)
+        except Exception as e:
+            print(f"[!] Lỗi khi đọc config.json ({e}), dùng cấu hình mặc định.")
+
+    # Ưu tiên biến môi trường khi triển khai trên Cloud (Render, Heroku, etc.)
+    if os.environ.get('DATABASE_URL'):
+        default_config['database_url'] = os.environ.get('DATABASE_URL')
+    if os.environ.get('BASE_URL'):
+        default_config['server']['base_url'] = os.environ.get('BASE_URL')
+    if os.environ.get('SMTP_USERNAME'):
+        default_config['smtp']['username'] = os.environ.get('SMTP_USERNAME')
+    if os.environ.get('SMTP_PASSWORD'):
+        default_config['smtp']['password'] = os.environ.get('SMTP_PASSWORD')
+    if os.environ.get('SMTP_ENABLED'):
+        default_config['smtp']['enabled'] = os.environ.get('SMTP_ENABLED').lower() in ('true', '1', 'yes')
+
+    return default_config
+
+def load_users():
+    default_users = [
+        {"email": "dangminhchi20041906@gmail.com", "name": "Đặng Minh Chí", "department": "CNTT"}
+    ]
+    if os.path.exists(USERS_PATH):
+        try:
+            with open(USERS_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[!] Lỗi khi đọc users.json ({e}), dùng danh sách mặc định.")
+    return default_users
+
+config = load_config()
+
+# --- Cấu hình Database SQLAlchemy (Aiven PostgreSQL) ---
+raw_db_url = config.get("database_url", "")
+# Chuẩn hóa tiền tố postgres:// thành postgresql:// cho tương thích SQLAlchemy 2.0
+if raw_db_url.startswith("postgres://"):
+    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+
+Base = declarative_base()
+
+class CampaignUser(Base):
+    __tablename__ = 'campaign_users'
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(String(255), default='Nhân viên')
+    department = Column(String(255), default='Chưa phân loại')
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    clicked = Column(Boolean, default=False)
+    ip_address = Column(String(100), default='N/A')
+    user_agent = Column(Text, default='N/A')
+    clicked_at = Column(String(100), default='N/A')
+
+class ClickLog(Base):
+    __tablename__ = 'click_logs'
+    id = Column(Integer, primary_key=True)
+    user_email = Column(String(255), nullable=False)
+    token = Column(String(64), nullable=False)
+    ip_address = Column(String(100))
+    user_agent = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+engine = None
+Session = None
+
+def init_database():
+    global engine, Session
+    if raw_db_url:
+        try:
+            engine = create_engine(raw_db_url, pool_pre_ping=True, pool_recycle=300)
+            Base.metadata.create_all(engine)
+            Session = scoped_session(sessionmaker(bind=engine))
+            print("[DB OK] Kết nối thành công Aiven PostgreSQL và đồng bộ bảng!")
+        except Exception as e:
+            print(f"[DB LỖI] Không thể kết nối Database ({e}), chuyển sang chế độ dự phòng.")
+            engine = None
+            Session = None
+
+init_database()
+
+# Dữ liệu fallback in-memory (phòng trường hợp DB gián đoạn)
+memory_users = {}
+
+def sync_campaign_users():
+    """Đồng bộ danh sách người dùng từ users.json vào Aiven DB"""
+    global config
+    config = load_config()
+    users_data = load_users()
+
+    if Session:
+        session = Session()
+        try:
+            for u in users_data:
+                email = u.get("email")
+                db_user = session.query(CampaignUser).filter_by(email=email).first()
+                if not db_user:
+                    token = uuid.uuid4().hex[:16]
+                    new_user = CampaignUser(
+                        email=email,
+                        name=u.get("name", "Nhân viên"),
+                        department=u.get("department", "Chưa phân loại"),
+                        token=token,
+                        clicked=False
+                    )
+                    session.add(new_user)
+                else:
+                    db_user.name = u.get("name", db_user.name)
+                    db_user.department = u.get("department", db_user.department)
+            session.commit()
+            print(f"[DB SYNC] Đã đồng bộ {len(users_data)} người dùng vào PostgreSQL.")
+        except Exception as e:
+            session.rollback()
+            print(f"[DB SYNC LỖI] {e}")
+        finally:
+            session.close()
+    else:
+        # Fallback In-memory
+        for u in users_data:
+            email = u.get("email")
+            if email not in memory_users:
+                memory_users[email] = {
+                    'name': u.get("name", "Nhân viên"),
+                    'department': u.get("department", "Chưa phân loại"),
+                    'token': uuid.uuid4().hex[:16],
+                    'clicked': False,
+                    'ip': 'N/A',
+                    'user_agent': 'N/A',
+                    'timestamp': 'N/A'
+                }
+
+# Đồng bộ dữ liệu khi khởi động
+sync_campaign_users()
+
+# --- Hàm gửi email (Mô phỏng hoặc qua SMTP) ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
-    """
-    Simulates sending a phishing email.
-    In a real scenario, you would configure an SMTP server here.
-    """
-    sender_email = "support@yourcompany.com" # This would be spoofed in a real attack
-    subject = "Urgent: Action Required Regarding Your Employee Benefits"
-    body = f"""
-    Dear {recipient_name},
+    camp_conf = config.get("campaign", {})
+    smtp_conf = config.get("smtp", {})
 
-    We have detected unusual activity on your employee benefits portal.
-    To secure your account and avoid suspension, please click on the link below to verify your details immediately:
+    sender_name = camp_conf.get("sender_display_name", "Phòng Nhân Sự")
+    
+    # Với Gmail SMTP, địa chỉ gửi cần là tài khoản đăng nhập để tránh bị chặn 553 / Spam
+    if smtp_conf.get("enabled") and smtp_conf.get("username"):
+        sender_email = smtp_conf.get("username")
+    else:
+        sender_email = camp_conf.get("sender_email", "hr-benefits@yourcompany.com")
 
-    {unique_link}
+    subject = camp_conf.get("email_subject", "Khẩn cấp: Xác thực thông tin tài khoản nhân viên")
 
-    Failure to do so within 24 hours may result in the permanent suspension of your benefits access.
+    body = f"""Kính gửi {recipient_name},
 
-    Sincerely,
+Hệ thống phát hiện tài khoản của bạn cần được cập nhật và xác thực thông tin quyền lợi nhân sự định kỳ.
+Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấp vào liên kết xác thực an toàn dưới đây:
 
-    Benefits Department
-    Your Company HR
-    """
+{unique_link}
 
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = sender_email
+Lưu ý: Liên kết có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
+
+Trân trọng,
+{sender_name}
+Bộ phận Quản Trị Hệ Thống & Nhân Sự
+"""
+
+    msg = MIMEText(body, 'plain', 'utf-8')
+    msg['Subject'] = Header(subject, 'utf-8')
+    msg['From'] = f"{Header(sender_name, 'utf-8').encode()} <{sender_email}>"
     msg['To'] = recipient_email
 
-    print(f"\n--- Simulating Email to {recipient_email} ---")
-    print(f"Subject: {subject}")
-    print(f"From: {sender_email}")
-    print(f"To: {recipient_email}")
-    print(f"Body:\n{body}")
-    print("--- End Email Simulation ---\n")
+    if smtp_conf.get("enabled"):
+        try:
+            port = int(smtp_conf.get("port", 465))
+            server_host = smtp_conf.get("server", "smtp.gmail.com")
+            username = smtp_conf.get("username", "")
+            password = smtp_conf.get("password", "")
 
-    # In a real scenario, you'd use smtplib like this:
-    # try:
-    #     with smtplib.SMTP_SSL('smtp.your-email-provider.com', 465) as smtp:
-    #         smtp.login('your_smtp_username', 'your_smtp_password')
-    #         smtp.send_message(msg)
-    #     print(f"Email successfully 'sent' to {recipient_email}")
-    # except Exception as e:
-    #     print(f"Failed to 'send' email to {recipient_email}: {e}")
+            if port == 465:
+                with smtplib.SMTP_SSL(server_host, port) as server:
+                    server.login(username, password)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(server_host, port) as server:
+                    server.starttls()
+                    server.login(username, password)
+                    server.send_message(msg)
+            print(f"[SMTP OK] Đã gửi email thực tế đến: {recipient_email}")
+        except Exception as e:
+            print(f"[SMTP LỖI] Gửi đến {recipient_email} thất bại: {e}")
+    else:
+        print(f"\n--- [MÔ PHỎNG EMAIL] Gửi đến {recipient_email} ---")
+        print(f"Từ: {sender_name} <{sender_email}>")
+        print(f"Tiêu đề: {subject}")
+        print(f"Liên kết xác thực mã hóa: {unique_link}")
+        print("--------------------------------------------------\n")
+
+def dispatch_campaign():
+    """Tạo liên kết an toàn và tiến hành phát tán email"""
+    base_url = config.get("server", {}).get("base_url", "http://127.0.0.1:5000").rstrip("/")
+    tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
+
+    sync_campaign_users()
+
+    print("==================================================================")
+    print("🚀 BẮT ĐẦU CHIẾN DỊCH PHISHING SIMULATION")
+    print("==================================================================")
+
+    if Session:
+        session = Session()
+        try:
+            users = session.query(CampaignUser).all()
+            for u in users:
+                unique_link = f"{base_url}/{tracking_path}/{u.token}"
+                send_phishing_email(u.email, u.name, unique_link)
+        finally:
+            session.close()
+    else:
+        for email, data in memory_users.items():
+            unique_link = f"{base_url}/{tracking_path}/{data['token']}"
+            send_phishing_email(email, data['name'], unique_link)
+
+    print("==================================================================")
+    print(f"👉 Bảng điều khiển (Dashboard): {base_url}/dashboard")
+    print("==================================================================\n")
 
 # --- Flask Routes ---
 
 @app.route('/')
 def home():
-    """Simple home page for the Flask app."""
+    """Trang chủ hệ thống"""
     return """
-    <h1 style="font-family: Arial, sans-serif;">Phishing Campaign Simulator</h1>
-    <p style="font-family: Arial, sans-serif;">
-        This is a demonstration of a simple phishing campaign setup.
-        <br>
-        To start, run the `send_campaign_emails()` function in your Python environment.
-        <br>
-        Then, navigate to the generated links or check the dashboard.
-    </p>
-    <p style="font-family: Arial, sans-serif;">
-        <a href="/dashboard" style="font-family: Arial, sans-serif;">View Campaign Dashboard</a>
-    </p>
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <title>Phishing Campaign Simulator</title>
+        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-100 flex items-center justify-center min-h-screen p-6">
+        <div class="bg-white rounded-xl shadow-lg p-8 max-w-xl text-center">
+            <h1 class="text-3xl font-extrabold text-blue-700 mb-3">Phishing Campaign Simulator</h1>
+            <p class="text-gray-600 mb-6">
+                Nền tảng kiểm tra và nâng cao nhận thức an toàn thông tin nội bộ. Dữ liệu được lưu vĩnh viễn trên <strong>Aiven PostgreSQL</strong>.
+            </p>
+            <div class="space-y-3">
+                <a href="/dashboard" class="block w-full py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition">
+                    Xem Bảng Điều Khiển (Dashboard)
+                </a>
+                <a href="/reload" class="block w-full py-2 bg-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-300 transition">
+                    🚀 Gửi Email & Tải Lại Dữ Liệu
+                </a>
+            </div>
+        </div>
+    </body>
+    </html>
     """
 
-@app.route('/phish/<user_id>')
-def phishing_landing_page(user_id):
-    """
-    The 'phishing' landing page. Logs details and redirects to the external fake page.
-    """
-    ip_address = request.remote_addr
-    user_agent = request.headers.get('User-Agent')
-    timestamp = datetime.datetime.now().isoformat()
+@app.route('/reload')
+def reload_data():
+    """Đồng bộ database và gửi lại email chiến dịch"""
+    dispatch_campaign()
+    return redirect(url_for('dashboard'))
 
-    # Log the click immediately upon access
-    campaign_results[user_id] = {
-        'clicked': True,
-        'ip': ip_address,
-        'user_agent': user_agent,
-        'timestamp': timestamp
-    }
-    print(f"Phishing link clicked by user_id: {user_id}")
-    print(f"  IP: {ip_address}")
-    print(f"  User-Agent: {user_agent}")
-    print(f"  Timestamp: {timestamp}")
+# Route bắt bẫy click link mã hóa token
+@app.route('/verify/portal-auth/<token>')
+@app.route('/phish/<token>')
+def handle_click(token):
+    # Lấy IP thực (hỗ trợ reverse proxy, Cloudflare, tunnel, Render)
+    forwarded_for = request.headers.get('X-Forwarded-For')
+    if forwarded_for:
+        ip_address = forwarded_for.split(',')[0].strip()
+    else:
+        ip_address = request.remote_addr or 'N/A'
 
-    # Redirect to your external fake landing page
-    return redirect(app.config['EXTERNAL_FAKE_LANDING_PAGE_URL'])
+    user_agent = request.headers.get('User-Agent', 'N/A')
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    user_email = "Unknown"
+    user_name = "N/A"
+
+    if Session:
+        session = Session()
+        try:
+            db_user = session.query(CampaignUser).filter_by(token=token).first()
+            if db_user:
+                db_user.clicked = True
+                db_user.ip_address = ip_address
+                db_user.user_agent = user_agent
+                db_user.clicked_at = timestamp
+                user_email = db_user.email
+                user_name = db_user.name
+
+                # Ghi nhật ký vào click_logs
+                log_entry = ClickLog(
+                    user_email=db_user.email,
+                    token=token,
+                    ip_address=ip_address,
+                    user_agent=user_agent
+                )
+                session.add(log_entry)
+                session.commit()
+                print(f"\n⚠️  [LƯU VÀO POSTGRESQL] User: {user_name} ({user_email})")
+                print(f"    IP: {ip_address} | Thời gian: {timestamp}\n")
+        except Exception as e:
+            session.rollback()
+            print(f"[DB LỖI GHI LOG] {e}")
+        finally:
+            session.close()
+    else:
+        # Fallback in-memory
+        for email, data in memory_users.items():
+            if data.get('token') == token:
+                data['clicked'] = True
+                data['ip'] = ip_address
+                data['user_agent'] = user_agent
+                data['timestamp'] = timestamp
+                user_email = email
+                user_name = data['name']
+                break
+
+    camp_conf = config.get("campaign", {})
+    if camp_conf.get("use_internal_awareness", True):
+        return redirect(url_for('awareness_page'))
+    else:
+        return redirect(camp_conf.get("external_landing_page_url"))
 
 @app.route('/awareness')
 def awareness_page():
-    """
-    The awareness module page, explaining red flags.
-    """
+    """Trang giáo dục nhận thức an toàn thông tin khi nhân viên nhấp vào link"""
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="vi">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>You've Been Phished! (But It's a Test!)</title>
+        <title>Cảnh Báo An Toàn Thông Tin</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Inter', sans-serif; }
-        </style>
     </head>
     <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-        <div class="bg-white rounded-lg shadow-xl p-8 max-w-2xl w-full text-center">
-            <h1 class="text-3xl font-bold text-red-600 mb-4">Oops! You Clicked a Phishing Link!</h1>
-            <p class="text-gray-700 mb-6">
-                Don't worry, this was a **simulated phishing test** designed to help you recognize malicious emails.
-                You're not in trouble, but this is a great learning opportunity!
+        <div class="bg-white rounded-xl shadow-2xl p-8 max-w-2xl w-full text-center border-t-8 border-red-500">
+            <div class="mb-4 inline-flex p-3 bg-red-100 rounded-full text-red-600">
+                <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+            </div>
+            <h1 class="text-3xl font-extrabold text-red-600 mb-3">Bạn Vừa Nhấp Vào Một Liên Kết Mô Phỏng Phishing!</h1>
+            <p class="text-gray-700 mb-6 text-base">
+                Đừng quá lo lắng! Đây là một <strong>bài kiểm tra nhận thức an toàn định kỳ</strong> của tổ chức nhằm giúp bạn nâng cao kỹ năng phòng ngừa các cuộc tấn công mạng thực tế.
             </p>
 
-            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Here's What You Might Have Missed:</h2>
-            <ul class="list-disc list-inside text-left text-gray-700 space-y-2 mb-6">
-                <li><strong class="text-blue-600">Suspicious Sender:</strong> Did the email address look exactly right? Often, phishers use slight misspellings or unusual domains.</li>
-                <li><strong class="text-blue-600">Urgent or Threatening Language:</strong> Phishing emails often create a sense of panic or urgency ("Act now or your account will be suspended!").</li>
-                <li><strong class="text-blue-600">Generic Greetings:</strong> Did it address you by "Dear Customer" instead of your name?</li>
-                <li><strong class="text-blue-600">Unusual Requests:</strong> Were you asked to click a link to "verify" details, send money, or provide sensitive information?</li>
-                <li><strong class="text-blue-600">Grammar/Spelling Errors:</strong> While AI makes this less common, glaring mistakes are still a red flag.</li>
-                <li><strong class="text-blue-600">Hover Over Links:</strong> Did you hover over the link before clicking? The actual URL might not match the text.</li>
-            </ul>
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6 text-left">
+                <h2 class="text-lg font-bold text-blue-900 mb-3">🔍 Các Dấu Hiệu Bạn Cần Cảnh Giác:</h2>
+                <ul class="space-y-2 text-sm text-gray-800 list-disc list-inside">
+                    <li><strong>Áp lực khẩn cấp:</strong> Thư đe dọa tài khoản bị khóa trong 24h hoặc mất quyền lợi để bạn bấm vội.</li>
+                    <li><strong>Kiểm tra người gửi:</strong> Tên hiển thị có thể là "Nhân Sự", nhưng hãy nhìn kỹ địa chỉ email thực tế.</li>
+                    <li><strong>Rê chuột (Hover) kiểm tra liên kết:</strong> Đường link thực sự có trỏ về đúng domain chính thức của công ty không?</li>
+                    <li><strong>Xác minh kênh phụ:</strong> Khi nghi ngờ, hãy hỏi trực tiếp bộ phận IT/Nhân sự qua Zalo, Slack, Teams hoặc điện thoại nội bộ.</li>
+                </ul>
+            </div>
 
-            <p class="text-gray-700 mb-6">
-                **AI-generated phishing emails are getting very sophisticated.** They can be grammatically perfect and sound incredibly convincing. Always apply the "context is king" rule: Is this request normal for this sender? Is the timing suspicious? When in doubt, verify through a *separate*, known channel (e.g., call the person, use an internal chat, or log in directly to the official website).
+            <p class="text-sm text-gray-500 mb-6">
+                Bảo mật thông tin bắt đầu từ sự cảnh giác của mỗi cá nhân. Cảm ơn sự hợp tác của bạn!
             </p>
-
-            <p class="text-gray-700 font-semibold">
-                Thanks for participating in this exercise! Your vigilance helps keep us all safe.
-            </p>
-            <a href="/" class="inline-block mt-8 px-6 py-3 bg-blue-600 text-white font-bold rounded-full hover:bg-blue-700 transition duration-300">
-                Back to Home
+            <a href="/" class="inline-block px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition">
+                Quay lại Trang Chủ
             </a>
         </div>
     </body>
@@ -161,117 +423,158 @@ def awareness_page():
 
 @app.route('/dashboard')
 def dashboard():
-    """
-    Displays the campaign results (who clicked).
-    """
+    """Bảng điều khiển kết nối trực tiếp Aiven PostgreSQL"""
+    user_list = []
+    if Session:
+        session = Session()
+        try:
+            db_users = session.query(CampaignUser).order_by(CampaignUser.id).all()
+            for u in db_users:
+                user_list.append({
+                    'name': u.name,
+                    'email': u.email,
+                    'department': u.department,
+                    'token': u.token,
+                    'clicked': u.clicked,
+                    'ip': u.ip_address,
+                    'timestamp': u.clicked_at
+                })
+        finally:
+            session.close()
+    else:
+        for email, data in memory_users.items():
+            user_list.append({
+                'name': data['name'],
+                'email': email,
+                'department': data['department'],
+                'token': data['token'],
+                'clicked': data['clicked'],
+                'ip': data['ip'],
+                'timestamp': data['timestamp']
+            })
+
+    total_users = len(user_list)
+    clicked_users = sum(1 for u in user_list if u['clicked'])
+    click_rate = (clicked_users / total_users * 100) if total_users > 0 else 0
+
+    base_url = config.get("server", {}).get("base_url", "http://127.0.0.1:5000").rstrip("/")
+    tracking_path = config.get("campaign", {}).get("tracking_path", "/verify/portal-auth").strip("/")
+
     html_content = """
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="vi">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Phishing Campaign Dashboard</title>
+        <title>Dashboard Chiến Dịch Phishing</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Inter', sans-serif; }
-        </style>
     </head>
-    <body class="bg-gray-100 p-8">
-        <div class="bg-white rounded-lg shadow-xl p-8 max-w-4xl mx-auto">
-            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Phishing Campaign Results</h1>
-
-            <div class="mb-8">
-                <h2 class="text-2xl font-semibold text-gray-700 mb-4">Summary</h2>
-                <p class="text-gray-600">Total Users: <span class="font-bold">{{ total_users }}</span></p>
-                <p class="text-gray-600">Users Clicked: <span class="font-bold text-red-500">{{ clicked_users }}</span></p>
-                <p class="text-gray-600">Click Rate: <span class="font-bold text-green-600">{{ '{:.2f}'.format(click_rate) }}%</span></p>
+    <body class="bg-gray-50 p-6">
+        <div class="max-w-6xl mx-auto">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">Bảng Thống Kê Chiến Dịch Phishing</h1>
+                    <p class="text-sm text-gray-500 mt-1">Dữ liệu thời gian thực được đồng bộ trên <strong>Aiven PostgreSQL</strong></p>
+                </div>
+                <div class="space-x-2">
+                    <a href="/reload" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm transition shadow">
+                        🚀 Gửi Email Chiến Dịch / Tải Lại
+                    </a>
+                    <a href="/" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium text-sm transition">
+                        Trang Chủ
+                    </a>
+                </div>
             </div>
 
-            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Detailed Clicks</h2>
-            {% if clicked_users > 0 %}
-            <div class="overflow-x-auto">
-                <table class="min-w-full bg-white border border-gray-200 rounded-lg shadow-sm">
-                    <thead>
-                        <tr class="bg-gray-100 text-left text-gray-600 uppercase text-sm leading-normal">
-                            <th class="py-3 px-6 border-b border-gray-200">User Email</th>
-                            <th class="py-3 px-6 border-b border-gray-200">Status</th>
-                            <th class="py-3 px-6 border-b border-gray-200">IP Address</th>
-                            <th class="py-3 px-6 border-b border-gray-200">Timestamp</th>
-                            <th class="py-3 px-6 border-b border-gray-200">User Agent</th>
-                        </tr>
-                    </thead>
-                    <tbody class="text-gray-700 text-sm font-light">
-                        {% for user_email, user_name in users.items() %}
-                        <tr class="border-b border-gray-200 hover:bg-gray-50">
-                            <td class="py-3 px-6 text-left whitespace-nowrap">{{ user_email }}</td>
-                            <td class="py-3 px-6 text-left">
-                                {% if campaign_results.get(user_email, {}).get('clicked') %}
-                                    <span class="bg-red-200 text-red-600 py-1 px-3 rounded-full text-xs font-bold">CLICKED</span>
-                                {% else %}
-                                    <span class="bg-green-200 text-green-600 py-1 px-3 rounded-full text-xs font-bold">NOT CLICKED</span>
-                                {% endif %}
-                            </td>
-                            <td class="py-3 px-6 text-left">{{ campaign_results.get(user_email, {}).get('ip', 'N/A') }}</td>
-                            <td class="py-3 px-6 text-left">{{ campaign_results.get(user_email, {}).get('timestamp', 'N/A') }}</td>
-                            <td class="py-3 px-6 text-left break-all">{{ campaign_results.get(user_email, {}).get('user_agent', 'N/A') }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <!-- Thẻ tóm tắt -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                    <p class="text-sm font-medium text-gray-500">Tổng Số Mục Tiêu</p>
+                    <p class="text-3xl font-extrabold text-gray-900 mt-2">{{ total_users }}</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                    <p class="text-sm font-medium text-gray-500">Số Lượng Đã Click</p>
+                    <p class="text-3xl font-extrabold text-red-600 mt-2">{{ clicked_users }}</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                    <p class="text-sm font-medium text-gray-500">Tỷ Lệ Mắc Bẫy (Click Rate)</p>
+                    <p class="text-3xl font-extrabold text-blue-600 mt-2">{{ '{:.1f}'.format(click_rate) }}%</p>
+                </div>
             </div>
-            {% else %}
-            <p class="text-gray-600 text-center">No clicks recorded yet. Send out the emails!</p>
-            {% endif %}
-            <div class="text-center mt-8">
-                <a href="/" class="inline-block px-6 py-3 bg-blue-600 text-white font-bold rounded-full hover:bg-blue-700 transition duration-300">
-                    Back to Home
-                </a>
+
+            <!-- Bảng chi tiết -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="p-4 border-b border-gray-200 font-bold text-gray-700 flex justify-between items-center">
+                    <span>Chi Tiết Từng Nhân Viên</span>
+                    <span class="text-xs font-normal text-green-600 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
+                        ● PostgreSQL Active
+                    </span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead class="bg-gray-50 text-gray-600 text-xs uppercase font-semibold">
+                            <tr>
+                                <th class="py-3 px-4 text-left">Họ Tên / Email</th>
+                                <th class="py-3 px-4 text-left">Phòng Ban</th>
+                                <th class="py-3 px-4 text-left">Trạng Thái</th>
+                                <th class="py-3 px-4 text-left">Địa Chỉ IP</th>
+                                <th class="py-3 px-4 text-left">Thời Gian Click</th>
+                                <th class="py-3 px-4 text-left">Liên Kết Giả Lập Đã Gửi</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            {% for u in user_list %}
+                            <tr class="hover:bg-gray-50 transition">
+                                <td class="py-3 px-4">
+                                    <div class="font-semibold text-gray-900">{{ u.name }}</div>
+                                    <div class="text-xs text-gray-500">{{ u.email }}</div>
+                                </td>
+                                <td class="py-3 px-4 text-gray-700">{{ u.department }}</td>
+                                <td class="py-3 px-4">
+                                    {% if u.clicked %}
+                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                                            ⚠️ ĐÃ CLICK
+                                        </span>
+                                    {% else %}
+                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                                            🛡️ AN TOÀN
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3 px-4 text-gray-600 font-mono text-xs">{{ u.ip }}</td>
+                                <td class="py-3 px-4 text-gray-600 text-xs">{{ u.timestamp }}</td>
+                                <td class="py-3 px-4">
+                                    <a href="{{ base_url }}/{{ tracking_path }}/{{ u.token }}" target="_blank" class="text-blue-600 hover:underline font-mono text-xs">
+                                        .../{{ tracking_path }}/{{ u.token }}
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </body>
     </html>
     """
-    total_users = len(users)
-    clicked_users = sum(1 for user_id in users if campaign_results.get(user_id, {}).get('clicked'))
-    click_rate = (clicked_users / total_users * 100) if total_users > 0 else 0
 
     return render_template_string(
         html_content,
         total_users=total_users,
         clicked_users=clicked_users,
         click_rate=click_rate,
-        users=users,
-        campaign_results=campaign_results
+        user_list=user_list,
+        base_url=base_url,
+        tracking_path=tracking_path
     )
 
-# --- Campaign Execution Function ---
-def send_campaign_emails():
-    """
-    Prepares and 'sends' phishing emails to all defined users.
-    """
-    print("--- Initiating Phishing Campaign Email Dispatch ---")
-    for email, name in users.items():
-        # Initialize campaign_results for all users, even if not clicked yet
-        if email not in campaign_results:
-            campaign_results[email] = {'clicked': False, 'ip': 'N/A', 'user_agent': 'N/A', 'timestamp': 'N/A'}
-
-        # Generate a unique link for each user
-        unique_user_id = email
-        with app.app_context():
-            phishing_link = url_for('phishing_landing_page', user_id=unique_user_id, _external=True)
-
-        send_phishing_email(email, name, phishing_link)
-    print("--- Phishing Campaign Email Dispatch Complete (Simulated) ---")
-    print("Now, open the generated links in a browser to see the fake landing page and then the awareness page.")
-    print("Then, navigate to http://127.0.0.1:5000/dashboard to see the results.")
-
-
-# --- Main execution block ---
+# --- Điểm chạy chính ---
 if __name__ == '__main__':
-    send_campaign_emails()
+    dispatch_campaign()
 
-    print("\nStarting Flask web server...")
-    print("Access the home page at: http://127.0.0.1:5000/")
-    print("Access the dashboard at: http://127.0.0.1:5000/dashboard")
-    app.run(debug=True)
+    server_conf = config.get("server", {})
+    host = server_conf.get("host", "0.0.0.0")
+    port = server_conf.get("port", 5000)
+
+    print(f"\n[OK] Khởi động Flask Server tại http://{host}:{port}")
+    app.run(host=host, port=port, debug=True)

@@ -1,0 +1,23 @@
+{
+  "database_url": "postgresql://avnadmin:YOUR_PASSWORD@your-host.aivencloud.com:PORT/defaultdb?sslmode=require",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 5000,
+    "base_url": "http://127.0.0.1:5000"
+  },
+  "campaign": {
+    "tracking_path": "/verify/portal-auth",
+    "use_internal_awareness": true,
+    "external_landing_page_url": "https://sites.google.com/view/chopda-enterprise-test/home",
+    "email_subject": "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên",
+    "sender_display_name": "Cổng Thông Tin Nhân Sự",
+    "sender_email": "security-alert@internal-portal.com"
+  },
+  "smtp": {
+    "enabled": false,
+    "server": "smtp.gmail.com",
+    "port": 465,
+    "username": "your-email@gmail.com",
+    "password": "your-app-password"
+  }
+}
