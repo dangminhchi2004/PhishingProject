@@ -290,69 +290,44 @@ def get_saved_webhook_url():
     """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
     return get_saved_setting('webhook_url', config.get("smtp", {}).get("webhook_url", "").strip())
 
-# --- Hàm gửi email định dạng HTML tự nhiên (Tối ưu vượt bộ lọc Junk Mail của Outlook/M365) ---
+# --- Hàm gửi email định dạng HTML tự nhiên như người thật gõ (Vượt bộ lọc Junk Mail của Outlook/M365) ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
-    Gửi email HTML sử dụng Hyperlink với văn phong hành chính nội bộ tự nhiên,
-    tránh các từ khóa nhạy cảm khiến Microsoft 365 đưa vào Junk Mail.
+    Gửi email HTML chuẩn cấu trúc thư cá nhân Gmail (<div dir="ltr">), chỉ dùng Hyperlink chữ tự nhiên,
+    không dùng khung CSS hay nút bấm màu mè để tránh bị Microsoft 365 đánh dấu Spam/Phishing Template.
     """
     camp_conf = config.get("campaign", {})
     smtp_conf = config.get("smtp", {})
 
-    sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Ban Hành Chính - Nhân Sự"))
+    sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Phòng Hành Chính Nhân Sự"))
     if smtp_conf.get("enabled") and smtp_conf.get("username"):
         sender_email = smtp_conf.get("username")
     else:
         sender_email = camp_conf.get("sender_email", "hr-office@internal-portal.com")
 
-    subject = get_saved_setting("email_subject", camp_conf.get("email_subject", "Kế hoạch rà soát và đăng ký chế độ phúc lợi định kỳ"))
+    subject = get_saved_setting("email_subject", camp_conf.get("email_subject", "V/v: Đối chiếu danh sách đăng ký chế độ nhân viên"))
 
     plain_body = f"""Chào {recipient_name},
 
-Ban Hành Chính - Nhân Sự gửi đến bạn phiếu rà soát thông tin phúc lợi và chế độ nhân viên định kỳ trong quý này.
-
-Bạn vui lòng kiểm tra và xác nhận thông tin cá nhân tại biểu mẫu nội bộ:
+Mình gửi lại đường dẫn phiếu đối chiếu thông tin và danh sách đăng ký chế độ nhân viên đợt này.
+Bạn mở biểu mẫu kiểm tra lại thông tin cá nhân giúp bộ phận tổng hợp nhé:
 {unique_link}
 
-Nếu có thông tin cần điều chỉnh, vui lòng phản hồi trước ngày kết thúc đợt rà soát để bộ phận tổng hợp danh sách.
+Nếu các mục đã khớp thì chỉ cần mở xác nhận trên phiếu là hoàn tất.
 
-Trân trọng,
+Cảm ơn {recipient_name},
 {sender_name}
 """
 
-    html_body = f"""<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"></head>
-<body style="margin: 0; padding: 0; background-color: #f9fafb;">
-    <div style="font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; max-width: 580px; margin: 20px auto; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
-        <p style="margin-top: 0; font-size: 14px; color: #4b5563;">
-            <strong>{sender_name}</strong> &bull; Thông báo nội bộ
-        </p>
-        <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 12px 0 20px 0;">
-        <p style="font-size: 15px;">Chào <strong>{recipient_name}</strong>,</p>
-        <p style="font-size: 15px;">
-            Theo kế hoạch định kỳ, bộ phận Nhân sự đang tiến hành rà soát và cập nhật danh sách đăng ký chế độ phúc lợi cho nhân viên trong quý này.
-        </p>
-        <p style="font-size: 15px;">
-            Bạn vui lòng mở <a href="{unique_link}" style="color: #1d4ed8; font-weight: 600; text-decoration: underline;">Biểu mẫu xác nhận thông tin nhân sự</a> hoặc nhấn vào mục bên dưới để kiểm tra lại hồ sơ của mình:
-        </p>
-        <div style=" margin: 24px 0;">
-            <a href="{unique_link}"
-               style="background-color: #1d4ed8; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 600; display: inline-block;">
-               Xem &amp; Xác nhận biểu mẫu
-            </a>
-        </div>
-        <p style="font-size: 13px; color: #6b7280;">
-            Nếu thông tin không có gì thay đổi, bạn chỉ cần mở biểu mẫu để hệ thống ghi nhận trạng thái hoàn tất.
-        </p>
-        <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 20px 0 12px 0;">
-        <p style="font-size: 13px; color: #6b7280; margin-bottom: 0;">
-            Trân trọng,<br>
-            <strong>{sender_name}</strong>
-        </p>
-    </div>
-</body>
-</html>"""
+    # Cấu trúc HTML giống hệt 100% thư gõ tay từ Gmail (không dùng CSS button/box quảng cáo)
+    html_body = f"""<div dir="ltr" style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #222222; line-height: 1.6;">
+<p>Chào {recipient_name},</p>
+<p>Mình gửi thông tin đợt rà soát và cập nhật danh sách đăng ký chế độ phúc lợi nhân viên trong kỳ này.</p>
+<p>Nhờ {recipient_name} truy cập vào <a href="{unique_link}" target="_blank">Biểu mẫu đối chiếu thông tin nhân sự</a> để kiểm tra và xác nhận lại thông tin cá nhân giúp bộ phận tổng hợp nhé.</p>
+<p>Nếu thông tin trên phiếu không có gì thay đổi thì bạn chỉ cần mở xem để hệ thống ghi nhận hoàn tất.</p>
+<p>Cảm ơn bạn,<br>
+<strong>{sender_name}</strong></p>
+</div>"""
 
     # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443
     webhook_url = get_saved_webhook_url()
