@@ -290,6 +290,14 @@ def get_saved_webhook_url():
     """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
     return get_saved_setting('webhook_url', config.get("smtp", {}).get("webhook_url", "").strip())
 
+def get_saved_smtp_username():
+    """Lấy SMTP_USERNAME từ Database (app_settings) hoặc cấu hình mặc định"""
+    return get_saved_setting('smtp_username', config.get("smtp", {}).get("username", "").strip())
+
+def get_saved_smtp_password():
+    """Lấy SMTP_PASSWORD từ Database (app_settings) hoặc cấu hình mặc định"""
+    return get_saved_setting('smtp_password', config.get("smtp", {}).get("password", "").strip())
+
 # --- Hàm gửi email định dạng HTML với Hyperlink ẩn đường dẫn ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
@@ -300,8 +308,9 @@ def send_phishing_email(recipient_email, recipient_name, unique_link):
     smtp_conf = config.get("smtp", {})
 
     sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Cổng Thông Tin Nhân Sự"))
-    if smtp_conf.get("enabled") and smtp_conf.get("username"):
-        sender_email = smtp_conf.get("username")
+    saved_user = get_saved_smtp_username()
+    if smtp_conf.get("enabled") and saved_user:
+        sender_email = saved_user
     else:
         sender_email = camp_conf.get("sender_email", "security-alert@internal-portal.com")
 
@@ -388,8 +397,8 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
         try:
             port = int(smtp_conf.get("port", 465))
             server_host = smtp_conf.get("server", "smtp.gmail.com")
-            username = smtp_conf.get("username", "").strip()
-            password = smtp_conf.get("password", "").strip()
+            username = get_saved_smtp_username()
+            password = get_saved_smtp_password()
 
             msg = MIMEMultipart('alternative')
             msg['Subject'] = Header(subject, 'utf-8')
@@ -536,6 +545,39 @@ def save_webhook():
     except Exception as e:
         session.rollback()
         return redirect(url_for('dashboard', msg=f"Lỗi lưu cấu hình: {e}", status="error"))
+    finally:
+        Session.remove()
+
+@app.route('/settings/smtp', methods=['POST'])
+@admin_required
+def save_smtp_settings():
+    """Lưu cấu hình SMTP_USERNAME và SMTP_PASSWORD vào bảng app_settings trên Database"""
+    session = get_db_session()
+    if not session:
+        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+
+    smtp_username = request.form.get('smtp_username', '').strip()
+    smtp_password = request.form.get('smtp_password', '').strip()
+
+    try:
+        user_row = session.query(AppSetting).filter_by(key='smtp_username').first()
+        if user_row:
+            user_row.value = smtp_username
+        else:
+            session.add(AppSetting(key='smtp_username', value=smtp_username))
+
+        if smtp_password:
+            pw_row = session.query(AppSetting).filter_by(key='smtp_password').first()
+            if pw_row:
+                pw_row.value = smtp_password
+            else:
+                session.add(AppSetting(key='smtp_password', value=smtp_password))
+
+        session.commit()
+        return redirect(url_for('dashboard', msg=f"Đã lưu cấu hình SMTP ({smtp_username}) thành công!", status="success"))
+    except Exception as e:
+        session.rollback()
+        return redirect(url_for('dashboard', msg=f"Lỗi lưu cấu hình SMTP: {e}", status="error"))
     finally:
         Session.remove()
 
@@ -1093,6 +1135,8 @@ def dashboard():
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
     saved_webhook = get_saved_webhook_url()
+    saved_smtp_username = get_saved_smtp_username()
+    saved_smtp_password = get_saved_smtp_password()
 
     html_content = """
     <!DOCTYPE html>
@@ -1220,7 +1264,34 @@ def dashboard():
                                 </form>
                             </div>
 
-                            <!-- 2. Đổi mật khẩu Admin -->
+                            <!-- 2. Cấu hình Tài Khoản SMTP (SMTP_USERNAME & SMTP_PASSWORD) -->
+                            <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h3 class="text-xs font-bold text-indigo-900 uppercase">📧 Cấu Hình Tài Khoản SMTP</h3>
+                                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full {% if saved_smtp_username %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                        {% if saved_smtp_username %}Đã cấu hình{% else %}Chưa cấu hình{% endif %}
+                                    </span>
+                                </div>
+                                <form action="/settings/smtp" method="POST" class="space-y-2.5">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-indigo-900 mb-1">SMTP_USERNAME (Email gửi)</label>
+                                        <input type="email" name="smtp_username" value="{{ saved_smtp_username }}" required
+                                            placeholder="VD: example@gmail.com"
+                                            class="w-full px-3 py-2 border border-indigo-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-indigo-900 mb-1">SMTP_PASSWORD (Mật khẩu ứng dụng)</label>
+                                        <input type="password" name="smtp_password" value="{{ saved_smtp_password }}"
+                                            placeholder="Nhập App Password 16 ký tự..."
+                                            class="w-full px-3 py-2 border border-indigo-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    </div>
+                                    <button type="submit" class="w-full py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 text-xs transition shadow-sm">
+                                        💾 Lưu Cấu Hình SMTP
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- 3. Đổi mật khẩu Admin -->
                             <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                 <h3 class="text-xs font-bold text-gray-800 uppercase mb-1">🔑 Đổi Mật Khẩu Admin</h3>
                                 <p class="text-xs text-gray-500 mb-3">Mật khẩu bảo vệ trang Quản trị (Mặc định: <code>admin123</code>)</p>
@@ -1889,6 +1960,8 @@ def dashboard():
         base_url=base_url,
         tracking_path=tracking_path,
         saved_webhook=saved_webhook,
+        saved_smtp_username=saved_smtp_username,
+        saved_smtp_password=saved_smtp_password,
         msg=msg,
         status=status
     )
