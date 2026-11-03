@@ -540,6 +540,17 @@ def change_admin_password():
     finally:
         Session.remove()
 
+def normalize_display_name(raw_name):
+    """Đảo lại tên có dấu phẩy: VD 'Chí, Đặng Minh' -> 'Đặng Minh Chí', tên không có dấu phẩy giữ nguyên"""
+    cleaned = (raw_name or '').strip()
+    if not cleaned:
+        return 'Nhân viên'
+    if ',' in cleaned:
+        parts = [p.strip() for p in cleaned.split(',', 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return f"{parts[1]} {parts[0]}"
+    return cleaned
+
 @app.route('/users/add', methods=['POST'])
 @admin_required
 def add_user():
@@ -548,7 +559,7 @@ def add_user():
     if not session:
         return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
 
-    name = request.form.get('name', '').strip() or 'Nhân viên'
+    name = normalize_display_name(request.form.get('name', ''))
     email = request.form.get('email', '').strip().lower()
     department = request.form.get('department', '').strip() or 'Chưa phân loại'
 
@@ -610,7 +621,7 @@ def import_bulk_users():
 
         for item in items:
             email = (item.get('email') or '').strip().lower()
-            name = (item.get('name') or '').strip() or 'Nhân viên'
+            name = normalize_display_name(item.get('name'))
             department = (item.get('department') or '').strip() or 'Chưa phân loại'
 
             if not email or '@' not in email or email in seen_emails:
@@ -1621,6 +1632,20 @@ def dashboard():
                 return re.test(email);
             }
 
+            function formatDisplayName(rawName) {
+                var cleaned = String(rawName || '').trim();
+                if (!cleaned) return 'Nhân viên';
+                var commaIdx = cleaned.indexOf(',');
+                if (commaIdx !== -1) {
+                    var firstPart = cleaned.slice(0, commaIdx).trim();
+                    var secondPart = cleaned.slice(commaIdx + 1).trim();
+                    if (firstPart && secondPart) {
+                        return secondPart + ' ' + firstPart;
+                    }
+                }
+                return cleaned;
+            }
+
             function escapeHtml(str) {
                 return String(str || '')
                     .replace(/&/g, '&amp;')
@@ -1667,7 +1692,7 @@ def dashboard():
                         if (cols.length <= idxEmail) continue;
 
                         var rawEmail = (cols[idxEmail] || '').trim().toLowerCase();
-                        var rawName = (idxName !== -1 && cols[idxName]) ? cols[idxName].trim() : 'Nhân viên';
+                        var rawName = (idxName !== -1 && cols[idxName]) ? formatDisplayName(cols[idxName]) : 'Nhân viên';
                         var rawDept = (idxDept !== -1 && cols[idxDept]) ? cols[idxDept].trim() : 'Chưa phân loại';
 
                         if (!rawEmail && !rawName) continue;
