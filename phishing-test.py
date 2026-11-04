@@ -1112,6 +1112,39 @@ def awareness_page():
     </html>
     """)
 
+@app.route('/api/live-state')
+@admin_required
+def api_live_state():
+    """API nhẹ kiểm tra trạng thái dữ liệu mới theo thời gian thực (Realtime Polling)"""
+    session = get_db_session()
+    if not session:
+        return json.dumps({"ok": False}), 200, {'Content-Type': 'application/json'}
+    try:
+        total_users = session.query(User).count()
+        clicked_users = session.query(User).filter_by(clicked=True).count()
+        total_logs = session.query(ClickLog).count()
+        latest_log = session.query(ClickLog).order_by(ClickLog.id.desc()).first()
+
+        latest_log_id = latest_log.id if latest_log else 0
+        latest_click_text = ""
+        if latest_log:
+            latest_click_text = f"{latest_log.user_name} ({latest_log.user_email}) vừa nhấp vào liên kết lúc {latest_log.clicked_at}"
+
+        data = {
+            "ok": True,
+            "total_users": total_users,
+            "clicked_users": clicked_users,
+            "total_logs": total_logs,
+            "latest_log_id": latest_log_id,
+            "latest_click_text": latest_click_text
+        }
+        return json.dumps(data), 200, {'Content-Type': 'application/json'}
+    except Exception:
+        session.rollback()
+        return json.dumps({"ok": False}), 200, {'Content-Type': 'application/json'}
+    finally:
+        Session.remove()
+
 @app.route('/dashboard')
 @admin_required
 def dashboard():
@@ -1383,7 +1416,7 @@ def dashboard():
             {% endif %}
 
             <!-- Architectural KPI Grid (Minimalist Hairline Matrix) -->
-            <div class="bg-white border border-gray-200 rounded-md grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 sm:divide-x divide-gray-200">
+            <div id="liveKpiGrid" class="bg-white border border-gray-200 rounded-md grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 sm:divide-x divide-gray-200">
                 <div class="p-5 sm:p-7">
                     <p class="label-micro">Tổng mục tiêu</p>
                     <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ total_users }}</p>
@@ -1503,7 +1536,7 @@ def dashboard():
             </div>
 
             <!-- TABLE 1: TARGET USERS -->
-            <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
+            <div id="liveUsersTableCard" class="bg-white rounded-md border border-gray-200 overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center gap-3">
                     <div class="flex items-center gap-2 min-w-0">
                         <span class="text-sm font-semibold text-gray-900">Danh sách mục tiêu</span>
@@ -1666,7 +1699,7 @@ def dashboard():
             </div>
 
             <!-- TABLE 2: CLICK LOGS -->
-            <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
+            <div id="liveLogsTableCard" class="bg-white rounded-md border border-gray-200 overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
                     <div>
                         <span class="text-sm font-semibold text-gray-900">Nhật ký truy cập</span>
@@ -1737,6 +1770,12 @@ def dashboard():
             Đã sao chép liên kết vào bộ nhớ tạm
         </div>
 
+        <!-- Live Click Notification Toast -->
+        <div id="liveClickToast" class="fixed bottom-6 right-6 z-50 hidden bg-white border border-gray-300 text-gray-900 text-xs font-medium px-4 py-3 rounded flex items-center gap-2.5 max-w-sm">
+            <span class="w-2 h-2 rounded-full bg-red-600 flex-shrink-0"></span>
+            <span id="liveClickToastText" class="leading-snug"></span>
+        </div>
+
         <script>
             function toggleDrawer(show) {
                 var drawer = document.getElementById('settingsDrawer');
@@ -1764,6 +1803,74 @@ def dashboard():
                     toast.classList.add('hidden');
                 }, 2200);
             }
+
+            // --- CẬP NHẬT REALTIME DỮ LIỆU CLICK MỖI 3 GIÂY (KHÔNG CẦN F5 TRANG) ---
+            var currentLiveSig = null;
+            var currentLatestLogId = null;
+            var isUpdatingDom = false;
+
+            function showLiveClickToast(text) {
+                if (!text) return;
+                var toast = document.getElementById('liveClickToast');
+                var label = document.getElementById('liveClickToastText');
+                if (!toast || !label) return;
+                label.textContent = text;
+                toast.classList.remove('hidden');
+                setTimeout(function() {
+                    toast.classList.add('hidden');
+                }, 5000);
+            }
+
+            function refreshDashboardSections(notifyText) {
+                if (isUpdatingDom) return;
+                isUpdatingDom = true;
+                fetch('/dashboard', { cache: 'no-store' })
+                    .then(function(res) { return res.text(); })
+                    .then(function(html) {
+                        var parser = new DOMParser();
+                        var doc = parser.parseFromString(html, 'text/html');
+                        var ids = ['liveKpiGrid', 'liveUsersTableCard', 'liveLogsTableCard'];
+                        for (var i = 0; i < ids.length; i++) {
+                            var newEl = doc.getElementById(ids[i]);
+                            var curEl = document.getElementById(ids[i]);
+                            if (newEl && curEl) {
+                                curEl.innerHTML = newEl.innerHTML;
+                            }
+                        }
+                        if (notifyText) {
+                            showLiveClickToast(notifyText);
+                        }
+                    })
+                    .catch(function() {})
+                    .finally(function() {
+                        isUpdatingDom = false;
+                    });
+            }
+
+            function pollLiveState() {
+                if (document.hidden || isUpdatingDom) return;
+                fetch('/api/live-state', { cache: 'no-store' })
+                    .then(function(res) { return res.json(); })
+                    .then(function(data) {
+                        if (!data || !data.ok) return;
+                        var sig = data.total_users + ':' + data.clicked_users + ':' + data.total_logs + ':' + data.latest_log_id;
+                        if (currentLiveSig === null) {
+                            currentLiveSig = sig;
+                            currentLatestLogId = data.latest_log_id;
+                            return;
+                        }
+                        if (sig !== currentLiveSig) {
+                            var isNewClick = data.latest_log_id > currentLatestLogId;
+                            currentLiveSig = sig;
+                            currentLatestLogId = data.latest_log_id;
+                            refreshDashboardSections(isNewClick ? data.latest_click_text : '');
+                        }
+                    })
+                    .catch(function() {});
+            }
+
+            setInterval(pollLiveState, 3000);
+            pollLiveState();
 
             // --- XỬ LÝ QUÉT & XEM TRƯỚC FILE CSV (userAccount.csv) ---
             var scannedCsvUsers = [];
