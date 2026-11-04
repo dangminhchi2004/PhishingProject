@@ -526,6 +526,13 @@ def admin_login():
     </html>
     """, error_msg=error_msg)
 
+def redirect_dashboard(msg="", status="info"):
+    """Chuyển hướng về /dashboard mà KHÔNG thêm tham số lên thanh địa chỉ (lưu tạm vào session)"""
+    if msg:
+        flask_session['flash_msg'] = msg
+        flask_session['flash_status'] = status
+    return redirect(url_for('dashboard'))
+
 @app.route('/logout', methods=['POST', 'GET'])
 def admin_logout():
     flask_session.pop('is_admin', None)
@@ -537,7 +544,7 @@ def save_webhook():
     """Lưu Google Apps Script HTTPS Webhook URL vào bảng app_settings"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     webhook_url = request.form.get('webhook_url', '').strip()
     try:
@@ -548,12 +555,12 @@ def save_webhook():
             session.add(AppSetting(key='webhook_url', value=webhook_url))
         session.commit()
         if webhook_url:
-            return redirect(url_for('dashboard', msg="Đã lưu HTTPS Gmail Webhook URL thành công!", status="success"))
+            return redirect_dashboard("Đã lưu HTTPS Gmail Webhook URL thành công!", "success")
         else:
-            return redirect(url_for('dashboard', msg="Đã xóa cấu hình Webhook URL.", status="success"))
+            return redirect_dashboard("Đã xóa cấu hình Webhook URL.", "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi lưu cấu hình: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi lưu cấu hình: {e}", "error")
     finally:
         Session.remove()
 
@@ -563,7 +570,7 @@ def save_smtp_settings():
     """Lưu cấu hình SMTP_USERNAME và SMTP_PASSWORD vào bảng app_settings trên Database"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     smtp_username = request.form.get('smtp_username', '').strip()
     smtp_password = request.form.get('smtp_password', '').strip()
@@ -583,10 +590,10 @@ def save_smtp_settings():
                 session.add(AppSetting(key='smtp_password', value=smtp_password))
 
         session.commit()
-        return redirect(url_for('dashboard', msg=f"Đã lưu cấu hình SMTP ({smtp_username}) thành công!", status="success"))
+        return redirect_dashboard(f"Đã lưu cấu hình SMTP ({smtp_username}) thành công!", "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi lưu cấu hình SMTP: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi lưu cấu hình SMTP: {e}", "error")
     finally:
         Session.remove()
 
@@ -596,12 +603,12 @@ def change_admin_password():
     """Đổi mật khẩu Admin trực tiếp trên giao diện Web"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     new_pw = request.form.get('new_password', '').strip()
     if len(new_pw) < 4:
         Session.remove()
-        return redirect(url_for('dashboard', msg="Mật khẩu mới phải có ít nhất 4 ký tự!", status="error"))
+        return redirect_dashboard("Mật khẩu mới phải có ít nhất 4 ký tự!", "error")
 
     try:
         row = session.query(AppSetting).filter_by(key='admin_password').first()
@@ -610,10 +617,10 @@ def change_admin_password():
         else:
             session.add(AppSetting(key='admin_password', value=new_pw))
         session.commit()
-        return redirect(url_for('dashboard', msg="Đã cập nhật mật khẩu Admin mới thành công!", status="success"))
+        return redirect_dashboard("Đã cập nhật mật khẩu Admin mới thành công!", "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi đổi mật khẩu: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi đổi mật khẩu: {e}", "error")
     finally:
         Session.remove()
 
@@ -634,7 +641,7 @@ def add_user():
     """Thêm User mới trực tiếp từ giao diện Web vào bảng users (với token ngắn 8 ký tự)"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     name = normalize_display_name(request.form.get('name', ''))
     email = request.form.get('email', '').strip().lower()
@@ -642,7 +649,7 @@ def add_user():
 
     if not email or '@' not in email:
         Session.remove()
-        return redirect(url_for('dashboard', msg="Vui lòng nhập địa chỉ Email hợp lệ!", status="error"))
+        return redirect_dashboard("Vui lòng nhập địa chỉ Email hợp lệ!", "error")
 
     try:
         existing = session.query(User).filter_by(email=email).first()
@@ -668,10 +675,10 @@ def add_user():
             session.add(new_user)
             session.commit()
             msg = f"Đã thêm thành công user: {name} ({email}) vào Database!"
-        return redirect(url_for('dashboard', msg=msg, status="success"))
+        return redirect_dashboard(msg, "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi khi thêm user: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi khi thêm user: {e}", "error")
     finally:
         Session.remove()
 
@@ -681,13 +688,13 @@ def import_bulk_users():
     """Thêm hàng loạt các User đã được chọn từ bảng xem trước CSV vào Database"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     users_json = request.form.get('users_json', '[]')
     try:
         items = json.loads(users_json)
         if not isinstance(items, list) or len(items) == 0:
-            return redirect(url_for('dashboard', msg="Chưa có user nào được chọn để thêm!", status="error"))
+            return redirect_dashboard("Chưa có user nào được chọn để thêm!", "error")
 
         existing_users = session.query(User).all()
         existing_map = {u.email.lower(): u for u in existing_users}
@@ -728,10 +735,10 @@ def import_bulk_users():
 
         session.commit()
         msg = f"Đã nhập từ file CSV thành công: Thêm mới {added_count} user, Cập nhật {updated_count} user!"
-        return redirect(url_for('dashboard', msg=msg, status="success"))
+        return redirect_dashboard(msg, "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi khi nhập danh sách CSV: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi khi nhập danh sách CSV: {e}", "error")
     finally:
         Session.remove()
 
@@ -741,7 +748,7 @@ def delete_user(user_id):
     """Xóa 1 user khỏi bảng users"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     try:
         u = session.query(User).filter_by(id=user_id).first()
@@ -749,11 +756,11 @@ def delete_user(user_id):
             email = u.email
             session.delete(u)
             session.commit()
-            return redirect(url_for('dashboard', msg=f"Đã xóa user {email} khỏi Database.", status="success"))
-        return redirect(url_for('dashboard', msg="Không tìm thấy user cần xóa.", status="error"))
+            return redirect_dashboard(f"Đã xóa user {email} khỏi Database.", "success")
+        return redirect_dashboard("Không tìm thấy user cần xóa.", "error")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi khi xóa user: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi khi xóa user: {e}", "error")
     finally:
         Session.remove()
 
@@ -763,7 +770,7 @@ def send_single_user(user_id):
     """Gửi email cho 1 user cụ thể"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
@@ -771,19 +778,19 @@ def send_single_user(user_id):
     try:
         u = session.query(User).filter_by(id=user_id).first()
         if not u:
-            return redirect(url_for('dashboard', msg="Không tìm thấy user!", status="error"))
+            return redirect_dashboard("Không tìm thấy user!", "error")
 
         unique_link = f"{base_url}/{tracking_path}/{u.token}"
         ok, detail_msg = send_phishing_email(u.email, u.name, unique_link)
         if ok:
             u.last_sent_at = get_vn_now_str()
             session.commit()
-            return redirect(url_for('dashboard', msg=detail_msg, status="success"))
+            return redirect_dashboard(detail_msg, "success")
         else:
-            return redirect(url_for('dashboard', msg=detail_msg, status="error"))
+            return redirect_dashboard(detail_msg, "error")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi hệ thống: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi hệ thống: {e}", "error")
     finally:
         Session.remove()
 
@@ -794,7 +801,7 @@ def send_all_users():
     """Gửi email chiến dịch cho toàn bộ user trong bảng users"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
@@ -802,7 +809,7 @@ def send_all_users():
     try:
         users = session.query(User).all()
         if not users:
-            return redirect(url_for('dashboard', msg="Danh sách User đang trống! Hãy thêm User ở form bên dưới trước khi gửi.", status="error"))
+            return redirect_dashboard("Danh sách User đang trống! Hãy thêm User ở form bên dưới trước khi gửi.", "error")
 
         success_count = 0
         last_err = ""
@@ -822,14 +829,14 @@ def send_all_users():
         session.commit()
 
         if success_count == len(users):
-            return redirect(url_for('dashboard', msg=f"Đã gửi thành công {success_count}/{len(users)} email (ẩn link bằng Hyperlink)!", status="success"))
+            return redirect_dashboard(f"Đã gửi thành công {success_count}/{len(users)} email (ẩn link bằng Hyperlink)!", "success")
         elif success_count > 0:
-            return redirect(url_for('dashboard', msg=f"Đã gửi {success_count}/{len(users)} email. Lỗi: {last_err}", status="error"))
+            return redirect_dashboard(f"Đã gửi {success_count}/{len(users)} email. Lỗi: {last_err}", "error")
         else:
-            return redirect(url_for('dashboard', msg=f"Không thể gửi email: {last_err}", status="error"))
+            return redirect_dashboard(f"Không thể gửi email: {last_err}", "error")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi khi gửi chiến dịch: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi khi gửi chiến dịch: {e}", "error")
     finally:
         Session.remove()
 
@@ -839,7 +846,7 @@ def clear_clicks():
     """Xóa sạch bảng click_logs và đặt lại trạng thái clicked=False cho toàn bộ bảng users"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     try:
         session.query(ClickLog).delete()
@@ -850,10 +857,10 @@ def clear_clicks():
             u.user_agent = 'N/A'
             u.clicked_at = 'N/A'
         session.commit()
-        return redirect(url_for('dashboard', msg="Đã xóa sạch lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN!", status="success"))
+        return redirect_dashboard("Đã xóa sạch lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN!", "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi khi xóa lịch sử click: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi khi xóa lịch sử click: {e}", "error")
     finally:
         Session.remove()
 
@@ -863,16 +870,16 @@ def clear_all_tables():
     """Xóa sạch dữ liệu trong cả 2 bảng: users và click_logs"""
     session = get_db_session()
     if not session:
-        return redirect(url_for('dashboard', msg=f"Lỗi kết nối Database: {last_db_error}", status="error"))
+        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
 
     try:
         session.query(ClickLog).delete()
         session.query(User).delete()
         session.commit()
-        return redirect(url_for('dashboard', msg="Đã xóa trắng toàn bộ dữ liệu bảng Users và bảng Click Logs trên Database!", status="success"))
+        return redirect_dashboard("Đã xóa trắng toàn bộ dữ liệu bảng Users và bảng Click Logs trên Database!", "success")
     except Exception as e:
         session.rollback()
-        return redirect(url_for('dashboard', msg=f"Lỗi khi xóa toàn bộ bảng: {e}", status="error"))
+        return redirect_dashboard(f"Lỗi khi xóa toàn bộ bảng: {e}", "error")
     finally:
         Session.remove()
 
@@ -1149,8 +1156,8 @@ def api_live_state():
 @admin_required
 def dashboard():
     """Bảng điều khiển chỉ dành riêng cho Admin đã đăng nhập"""
-    msg = request.args.get('msg', '')
-    status = request.args.get('status', 'info')
+    msg = flask_session.pop('flash_msg', '') or request.args.get('msg', '')
+    status = flask_session.pop('flash_status', '') or request.args.get('status', 'info')
 
     user_list = []
     click_logs = []
@@ -1406,12 +1413,12 @@ def dashboard():
 
             <!-- Status Notification Banner -->
             {% if msg %}
-            <div class="px-4 py-3 rounded border {% if status == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-white border-gray-300 text-gray-900{% endif %} flex justify-between items-center gap-4">
+            <div id="statusAlertBanner" class="px-4 py-3 rounded border {% if status == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-white border-gray-300 text-gray-900{% endif %} flex justify-between items-center gap-4 transition-opacity duration-300">
                 <div class="text-xs sm:text-sm font-medium flex items-center gap-2.5">
                     <span class="w-1.5 h-1.5 rounded-full flex-shrink-0 {% if status == 'error' %}bg-red-600{% else %}bg-gray-900{% endif %}"></span>
                     <span>{{ msg }}</span>
                 </div>
-                <a href="/dashboard" class="text-xs text-gray-400 hover:text-gray-900 font-medium flex-shrink-0">Đóng</a>
+                <button type="button" onclick="dismissAlertBanner()" class="text-xs text-gray-400 hover:text-gray-900 font-medium flex-shrink-0">Đóng</button>
             </div>
             {% endif %}
 
@@ -1804,6 +1811,24 @@ def dashboard():
                 }, 2200);
             }
 
+            function dismissAlertBanner() {
+                var banner = document.getElementById('statusAlertBanner');
+                if (banner) {
+                    banner.classList.add('hidden');
+                }
+            }
+
+            // Giữ thanh địa chỉ luôn sạch (/dashboard) và tự động ẩn thông báo sau 10 giây
+            (function() {
+                if (window.location.search && window.history && window.history.replaceState) {
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                }
+                var banner = document.getElementById('statusAlertBanner');
+                if (banner) {
+                    setTimeout(dismissAlertBanner, 10000);
+                }
+            })();
+
             // --- CẬP NHẬT REALTIME DỮ LIỆU CLICK MỖI 3 GIÂY (KHÔNG CẦN F5 TRANG) ---
             var currentLiveSig = null;
             var currentLatestLogId = null;
@@ -1818,7 +1843,7 @@ def dashboard():
                 toast.classList.remove('hidden');
                 setTimeout(function() {
                     toast.classList.add('hidden');
-                }, 5000);
+                }, 10000);
             }
 
             function refreshDashboardSections(notifyText) {
