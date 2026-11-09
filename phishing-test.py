@@ -4,6 +4,7 @@ import json
 import uuid
 import base64
 import smtplib
+import threading
 import urllib.request
 import urllib.error
 import datetime
@@ -16,7 +17,7 @@ from flask import Flask, request, redirect, url_for, render_template_string, ses
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 
-# Đảm bảo mã hóa UTF-8 trên Windows console
+# Ensure UTF-8 console output on Windows
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -25,7 +26,7 @@ if sys.platform == "win32":
         pass
 
 def safe_log(msg):
-    """In log an toàn trên mọi môi trường"""
+    """Thread-safe console logger across environments"""
     try:
         print(msg, flush=True)
     except Exception:
@@ -34,14 +35,14 @@ def safe_log(msg):
         except Exception:
             pass
 
-# --- Khởi tạo ứng dụng Flask ---
+# --- Initialize Flask Application ---
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "phishing-sim-secret-key-2026-admin-lock")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
 
-# Cấu hình dự phòng được mã hóa Base64
+# Base64-encoded fallback credentials
 _FALLBACK_DB = base64.b64decode("cG9zdGdyZXNxbDovL2F2bmFkbWluOkFWTlNfR3hNek5DUjJSMy1LTDlsVU1fa0BwaGlzaGluZ2RhdGFiYXNlLWRhbmdtaW5oY2hpMjAwNDE5MDYtbWVkY2FyZS5rLmFpdmVuY2xvdWQuY29tOjEzNjQ4L2RlZmF1bHRkYj9zc2xtb2RlPXJlcXVpcmU=").decode('utf-8')
 _FALLBACK_PW = base64.b64decode("Y2VmdmprdnBpeWFqb3NpcQ==").decode('utf-8')
 
@@ -81,13 +82,12 @@ def load_config():
                     else:
                         default_config[k] = v
         except Exception as e:
-            safe_log(f"[!] Lỗi khi đọc config.json ({e}), dùng cấu hình mặc định.")
+            safe_log(f"[!] Failed to read config.json ({e}), using defaults.")
 
-    # Hỗ trợ rút gọn đường dẫn cũ /verify/portal-auth thành /v
     if default_config['campaign'].get('tracking_path') == '/verify/portal-auth':
         default_config['campaign']['tracking_path'] = '/v'
 
-    # Ưu tiên biến môi trường khi triển khai trên Cloud (Render)
+    # Prioritize cloud environment variables (Render)
     if os.environ.get('DATABASE_URL'):
         default_config['database_url'] = os.environ.get('DATABASE_URL')
     if os.environ.get('BASE_URL'):
@@ -107,37 +107,37 @@ def load_config():
 
 config = load_config()
 
-# --- Cấu hình Database SQLAlchemy (Aiven PostgreSQL) ---
+# --- Database Models (Aiven PostgreSQL via SQLAlchemy) ---
 Base = declarative_base()
 
 class User(Base):
-    """Bảng lưu danh sách User mục tiêu"""
+    """Target recipients table"""
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    name = Column(String(255), default='Nhân viên')
-    department = Column(String(255), default='Chưa phân loại')
+    name = Column(String(255), default='Employee')
+    department = Column(String(255), default='Unassigned')
     token = Column(String(64), unique=True, nullable=False, index=True)
     clicked = Column(Boolean, default=False)
     ip_address = Column(String(100), default='N/A')
     user_agent = Column(Text, default='N/A')
     clicked_at = Column(String(100), default='N/A')
-    last_sent_at = Column(String(100), default='Chưa gửi')
+    last_sent_at = Column(String(100), default='Not sent')
 
 class ClickLog(Base):
-    """Bảng lưu lịch sử từng lượt click"""
+    """Click activity log table"""
     __tablename__ = 'click_logs'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_email = Column(String(255), nullable=False)
-    user_name = Column(String(255), default='Nhân viên')
-    department = Column(String(255), default='Chưa phân loại')
+    user_name = Column(String(255), default='Employee')
+    department = Column(String(255), default='Unassigned')
     token = Column(String(64), nullable=False)
     ip_address = Column(String(100), default='N/A')
     user_agent = Column(Text, default='N/A')
     clicked_at = Column(String(100), default='N/A')
 
 class AppSetting(Base):
-    """Bảng lưu cấu hình hệ thống (Webhook URL, Mật khẩu Admin...)"""
+    """Persistent application settings table"""
     __tablename__ = 'app_settings'
     key = Column(String(100), primary_key=True)
     value = Column(Text, default='')
@@ -146,8 +146,35 @@ engine = None
 Session = None
 last_db_error = ""
 
+# Background bulk email job state
+_send_lock = threading.Lock()
+campaign_send_state = {
+    "running": False,
+    "sent": 0,
+    "failed": 0,
+    "total": 0,
+    "last_error": "",
+    "finished_at": ""
+}
+
+UNSENT_MARKERS = ('Chưa gửi', 'Not sent', '', None)
+
+def is_unsent_value(val):
+    return (val or '').strip() in ('Chưa gửi', 'Not sent', '')
+
+def format_sent_display(val):
+    if is_unsent_value(val):
+        return 'Not sent'
+    return val
+
+def format_dept_display(val):
+    cleaned = (val or '').strip()
+    if not cleaned or cleaned == 'Chưa phân loại':
+        return 'Unassigned'
+    return cleaned
+
 def ensure_pg_driver():
-    """Đảm bảo thư viện kết nối PostgreSQL (psycopg2 hoặc psycopg) luôn có sẵn"""
+    """Ensure psycopg2 or psycopg driver is installed"""
     for mod_name in ("psycopg2", "psycopg"):
         try:
             __import__(mod_name)
@@ -156,7 +183,7 @@ def ensure_pg_driver():
             pass
     try:
         import subprocess
-        safe_log("[AUTO-INSTALL] Đang tự động cài đặt driver PostgreSQL...")
+        safe_log("[AUTO-INSTALL] Installing PostgreSQL driver...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "psycopg2-binary", "psycopg[binary]"])
         for mod_name in ("psycopg2", "psycopg"):
             try:
@@ -169,7 +196,7 @@ def ensure_pg_driver():
     return "psycopg2"
 
 def clean_db_url(url_str, driver="psycopg2"):
-    """Làm sạch chuỗi DATABASE_URL và tự động gán đúng driver PostgreSQL hiện có"""
+    """Sanitize DATABASE_URL and bind active PostgreSQL driver"""
     if not url_str:
         return ""
     s = str(url_str).strip().strip('"').strip("'")
@@ -207,21 +234,21 @@ def init_database():
             try:
                 Base.metadata.create_all(engine)
             except Exception as table_err:
-                safe_log(f"[DB INFO] Bảng đã tồn tại: {table_err}")
+                safe_log(f"[DB INFO] Tables already exist: {table_err}")
 
             last_db_error = ""
-            safe_log("[DB OK] Đã kết nối Aiven PostgreSQL (bảng users & click_logs sẵn sàng)!")
+            safe_log("[DB OK] Connected to Aiven PostgreSQL (users & click_logs ready).")
             return True
         except Exception as e:
             last_db_error = str(e)
-            safe_log(f"[DB THỬ LẠI] URL không hợp lệ hoặc lỗi kết nối ({e}), thử URL dự phòng...")
+            safe_log(f"[DB RETRY] Connection failed ({e}), trying fallback URL...")
 
     engine = None
     Session = None
     return False
 
 def get_db_session():
-    """Lấy session DB, tự động kết nối lại nếu trước đó bị ngắt"""
+    """Retrieve a database session, reconnecting automatically if needed"""
     global Session
     if Session is None:
         init_database()
@@ -232,13 +259,26 @@ def get_db_session():
 init_database()
 
 def get_vn_now_str():
-    """Lấy thời gian hiện tại theo múi giờ Việt Nam (UTC+7)"""
+    """Return current timestamp in UTC+7 (YYYY-MM-DD HH:MM:SS)"""
     vn_tz = datetime.timezone(datetime.timedelta(hours=7))
     return datetime.datetime.now(vn_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-# --- Quản lý quyền Admin ---
+def generate_unique_token(session, reserved_tokens=None):
+    """Generate a guaranteed-unique 8-character hex tracking token"""
+    if reserved_tokens is None:
+        reserved_tokens = set()
+    while True:
+        candidate = uuid.uuid4().hex[:8]
+        if candidate in reserved_tokens:
+            continue
+        exists = session.query(User.id).filter_by(token=candidate).first()
+        if not exists:
+            reserved_tokens.add(candidate)
+            return candidate
+
+# --- Admin Authentication & Settings Helpers ---
 def get_admin_password():
-    """Lấy mật khẩu Admin từ Database hoặc cấu hình mặc định (admin123)"""
+    """Retrieve admin password from DB or fallback config"""
     session = get_db_session()
     if session:
         try:
@@ -250,7 +290,7 @@ def get_admin_password():
     return config.get("admin_password", "admin123")
 
 def admin_required(f):
-    """Decorator chặn người dùng thường truy cập vào trang quản trị"""
+    """Restrict access to authenticated administrators"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not flask_session.get('is_admin'):
@@ -259,7 +299,7 @@ def admin_required(f):
     return decorated_function
 
 def get_active_base_url():
-    """Tự động lấy domain hiện tại (Render hoặc Local)"""
+    """Resolve active public base URL (Render or Local)"""
     configured_url = config.get("server", {}).get("base_url", "").strip().rstrip("/")
     try:
         if request and request.host_url:
@@ -275,7 +315,7 @@ def get_active_base_url():
     return configured_url or "http://127.0.0.1:5000"
 
 def get_saved_setting(key, default_val=""):
-    """Đọc cấu hình từ bảng app_settings trên Database"""
+    """Read a persistent key from app_settings"""
     session = get_db_session()
     if session:
         try:
@@ -286,37 +326,50 @@ def get_saved_setting(key, default_val=""):
             session.rollback()
     return default_val
 
+def upsert_setting(session, key, val):
+    """Insert or update a setting in app_settings within an active transaction"""
+    row = session.query(AppSetting).filter_by(key=key).first()
+    if row:
+        row.value = val
+    else:
+        session.add(AppSetting(key=key, value=val))
+
 def get_saved_webhook_url():
-    """Lấy Webhook URL gửi mail qua HTTPS từ Database hoặc cấu hình"""
     return get_saved_setting('webhook_url', config.get("smtp", {}).get("webhook_url", "").strip())
 
 def get_saved_smtp_username():
-    """Lấy SMTP_USERNAME từ Database (app_settings) hoặc cấu hình mặc định"""
     return get_saved_setting('smtp_username', config.get("smtp", {}).get("username", "").strip())
 
 def get_saved_smtp_password():
-    """Lấy SMTP_PASSWORD từ Database (app_settings) hoặc cấu hình mặc định"""
     return get_saved_setting('smtp_password', config.get("smtp", {}).get("password", "").strip())
 
-# --- Hàm gửi email định dạng HTML với Hyperlink ẩn đường dẫn ---
+def get_saved_sender_name():
+    camp_conf = config.get("campaign", {})
+    return get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Cổng Thông Tin Nhân Sự"))
+
+def get_saved_email_subject():
+    camp_conf = config.get("campaign", {})
+    return get_saved_setting("email_subject", camp_conf.get("email_subject", "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên"))
+
+# --- Phishing Simulation Email Sender ---
 def send_phishing_email(recipient_email, recipient_name, unique_link):
     """
-    Gửi email HTML sử dụng Hyperlink (ẩn hoàn toàn đường dẫn thô trong nội dung email).
-    Trả về tuple: (success: bool, message: str)
+    Send HTML simulation email with masked hyperlinks.
+    Returns tuple: (success: bool, message: str)
     """
     camp_conf = config.get("campaign", {})
     smtp_conf = config.get("smtp", {})
 
-    sender_name = get_saved_setting("sender_name", camp_conf.get("sender_display_name", "Cổng Thông Tin Nhân Sự"))
+    sender_name = get_saved_sender_name()
     saved_user = get_saved_smtp_username()
     if smtp_conf.get("enabled") and saved_user:
         sender_email = saved_user
     else:
         sender_email = camp_conf.get("sender_email", "security-alert@internal-portal.com")
 
-    subject = get_saved_setting("email_subject", camp_conf.get("email_subject", "Thông báo quan trọng: Xác nhận tài khoản và quyền lợi nhân viên"))
+    subject = get_saved_email_subject()
 
-    # Nội dung văn bản thuần dự phòng (luôn kèm link rút gọn phòng trường hợp Apps Script chưa bật htmlBody)
+    # Plain-text fallback
     plain_body = f"""Kính gửi {recipient_name},
 
 Hệ thống phát hiện tài khoản của bạn cần được cập nhật và xác thực thông tin quyền lợi nhân sự định kỳ.
@@ -331,7 +384,7 @@ Trân trọng,
 Bộ phận Quản Trị Hệ Thống & Nhân Sự
 """
 
-    # Nội dung HTML chuyên nghiệp: Dùng Hyperlink và Nút bấm, KHÔNG hiển thị đường link thô
+    # HTML body with hyperlink and CTA button
     html_body = f"""
     <div style="font-family: Arial, Helvetica, sans-serif; color: #222222; max-width: 600px; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
         <h2 style="color: #1e40af; margin-top: 0; font-size: 18px; border-bottom: 2px solid #eff6ff; padding-bottom: 10px;">
@@ -364,7 +417,7 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
     </div>
     """
 
-    # 1. Nếu có cấu hình Webhook HTTPS (Google Apps Script) -> gửi qua cổng 443
+    # 1. HTTPS Webhook (Google Apps Script over port 443)
     webhook_url = get_saved_webhook_url()
     if webhook_url:
         try:
@@ -382,17 +435,17 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
             )
             try:
                 with urllib.request.urlopen(req, timeout=12) as resp:
-                    safe_log(f"[WEBHOOK OK] Đã gửi email HTML qua HTTPS tới {recipient_email}")
-                    return True, f"Đã gửi email (kèm Hyperlink) thành công tới {recipient_email}!"
+                    safe_log(f"[WEBHOOK OK] Sent HTML email via HTTPS to {recipient_email}")
+                    return True, f"Simulation email sent to {recipient_email}."
             except urllib.error.HTTPError as he:
                 if he.code in (200, 302, 405):
-                    return True, f"Đã gửi email (kèm Hyperlink) thành công tới {recipient_email}!"
+                    return True, f"Simulation email sent to {recipient_email}."
                 raise he
         except Exception as e:
-            safe_log(f"[WEBHOOK LỖI] {e}")
-            return False, f"Lỗi Webhook HTTPS: {e}"
+            safe_log(f"[WEBHOOK ERROR] {e}")
+            return False, f"HTTPS Webhook error: {e}"
 
-    # 2. Gửi qua SMTP (Hỗ trợ đầy đủ HTML + Hyperlink)
+    # 2. Direct SMTP fallback
     if smtp_conf.get("enabled"):
         try:
             port = int(smtp_conf.get("port", 465))
@@ -418,32 +471,70 @@ Bộ phận Quản Trị Hệ Thống & Nhân Sự
                     server.login(username, password)
                     server.send_message(msg)
 
-            safe_log(f"[SMTP OK] Đã gửi email HTML đến: {recipient_email}")
-            return True, f"Đã gửi email (kèm Hyperlink) thành công đến {recipient_email}"
+            safe_log(f"[SMTP OK] Sent HTML email to: {recipient_email}")
+            return True, f"Simulation email sent to {recipient_email}."
         except Exception as e:
             err_str = str(e)
-            safe_log(f"[SMTP LỖI] Gửi đến {recipient_email} thất bại: {err_str}")
+            safe_log(f"[SMTP ERROR] Failed for {recipient_email}: {err_str}")
             if "timed out" in err_str.lower() or "101" in err_str or "110" in err_str or "network is unreachable" in err_str.lower():
-                return False, f"Kết nối SMTP bị chặn trên Render Free. Hãy cấu hình Google Apps Script Webhook ở khung màu xanh bên dưới!"
-            return False, f"Lỗi gửi SMTP tới {recipient_email}: {err_str}"
+                return False, "Outbound SMTP is blocked on this cloud host. Please configure the HTTPS Webhook in Settings."
+            return False, f"SMTP error for {recipient_email}: {err_str}"
     else:
-        return True, f"Đã tạo link mô phỏng cho {recipient_email}"
+        return True, f"Generated simulation link for {recipient_email}."
+
+def _background_send_worker(user_ids, base_url, tracking_path):
+    """Background worker thread to send bulk emails without blocking HTTP workers"""
+    global campaign_send_state
+    session = get_db_session()
+    if not session:
+        with _send_lock:
+            campaign_send_state["running"] = False
+            campaign_send_state["last_error"] = "Database connection unavailable."
+        return
+
+    try:
+        for uid in user_ids:
+            u = session.query(User).filter_by(id=uid).first()
+            if not u:
+                continue
+            unique_link = f"{base_url}/{tracking_path}/{u.token}"
+            ok, detail_msg = send_phishing_email(u.email, u.name, unique_link)
+            if ok:
+                u.last_sent_at = get_vn_now_str()
+                session.commit()
+                with _send_lock:
+                    campaign_send_state["sent"] += 1
+            else:
+                with _send_lock:
+                    campaign_send_state["failed"] += 1
+                    campaign_send_state["last_error"] = detail_msg
+                if "blocked" in detail_msg.lower() or "timed out" in detail_msg.lower():
+                    break
+    except Exception as e:
+        session.rollback()
+        with _send_lock:
+            campaign_send_state["last_error"] = str(e)
+    finally:
+        with _send_lock:
+            campaign_send_state["running"] = False
+            campaign_send_state["finished_at"] = get_vn_now_str()
+        Session.remove()
 
 # --- Flask Routes ---
 
 @app.route('/')
 def home():
     """
-    Chặn toàn bộ User thường truy cập vào trang chủ (/).
-    Thiết kế theo phong cách Minimalism (NameThatUI): Tối giản, nhiều khoảng trắng, chữ sắc nét.
+    Block direct root access for standard users.
+    Minimalism design (NameThatUI): generous whitespace, crisp typography, 1px hairline border.
     """
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="vi">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>403 — Truy Cập Bị Hạn Chế</title>
+        <title>403 — Access Restricted</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -454,9 +545,9 @@ def home():
     <body class="flex items-center justify-center min-h-screen p-6">
         <div class="bg-white border border-gray-200 rounded-md p-8 sm:p-10 max-w-md w-full">
             <div class="font-mono-code text-xs uppercase tracking-widest text-gray-400 mb-3">HTTP 403 / FORBIDDEN</div>
-            <h1 class="text-xl font-semibold tracking-tight text-gray-900 mb-3">Truy cập trực tiếp bị từ chối</h1>
+            <h1 class="text-xl font-semibold tracking-tight text-gray-900 mb-3">Direct Access Restricted</h1>
             <p class="text-sm text-gray-500 leading-relaxed mb-8">
-                Hệ thống chỉ tiếp nhận yêu cầu thông qua liên kết xác thực định danh được gửi trực tiếp trong email cá nhân của nhân viên.
+                This gateway only accepts requests initiated through a valid personal verification link sent directly to your corporate email.
             </p>
             <div class="pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 font-mono-code">
                 <span>INTERNAL AUTH GATEWAY</span>
@@ -470,7 +561,7 @@ def home():
 @app.route('/login', methods=['GET', 'POST'])
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_login():
-    """Trang đăng nhập dành riêng cho Admin — Phong cách Minimalism"""
+    """Minimalist Admin Console Sign-In"""
     if flask_session.get('is_admin'):
         return redirect(url_for('dashboard'))
 
@@ -481,15 +572,15 @@ def admin_login():
             flask_session['is_admin'] = True
             return redirect(url_for('dashboard'))
         else:
-            error_msg = "Mật khẩu quản trị không chính xác."
+            error_msg = "Invalid administrator password."
 
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="vi">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Đăng Nhập Quản Trị</title>
+        <title>Sign In — Admin Console</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -513,12 +604,12 @@ def admin_login():
 
             <form method="POST" class="space-y-5">
                 <div>
-                    <label class="block text-xs uppercase tracking-wider text-gray-500 font-medium mb-2">Mật khẩu</label>
+                    <label class="block text-xs uppercase tracking-wider text-gray-500 font-medium mb-2">Password</label>
                     <input type="password" name="password" required autofocus placeholder="••••••••"
                         class="w-full px-3.5 py-2.5 border border-gray-200 rounded text-sm text-gray-900 bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                 </div>
                 <button type="submit" class="w-full py-2.5 btn-ink font-medium rounded text-sm transition">
-                     Tiếp tục
+                    Continue
                 </button>
             </form>
         </div>
@@ -527,7 +618,7 @@ def admin_login():
     """, error_msg=error_msg)
 
 def redirect_dashboard(msg="", status="info"):
-    """Chuyển hướng về /dashboard mà KHÔNG thêm tham số lên thanh địa chỉ (lưu tạm vào session)"""
+    """Redirect to /dashboard cleanly without polluting the URL query string"""
     if msg:
         flask_session['flash_msg'] = msg
         flask_session['flash_status'] = status
@@ -538,97 +629,105 @@ def admin_logout():
     flask_session.pop('is_admin', None)
     return redirect(url_for('admin_login'))
 
+@app.route('/settings/campaign', methods=['POST'])
+@admin_required
+def save_campaign_settings():
+    """Save customizable Sender Display Name and Email Subject in app_settings"""
+    session = get_db_session()
+    if not session:
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
+
+    sender_name = request.form.get('sender_name', '').strip()
+    email_subject = request.form.get('email_subject', '').strip()
+
+    if not sender_name or not email_subject:
+        Session.remove()
+        return redirect_dashboard("Sender display name and email subject cannot be empty.", "error")
+
+    try:
+        upsert_setting(session, 'sender_name', sender_name)
+        upsert_setting(session, 'email_subject', email_subject)
+        session.commit()
+        return redirect_dashboard("Campaign email template settings saved.", "success")
+    except Exception as e:
+        session.rollback()
+        return redirect_dashboard(f"Failed to save campaign settings: {e}", "error")
+    finally:
+        Session.remove()
+
 @app.route('/settings/webhook', methods=['POST'])
 @admin_required
 def save_webhook():
-    """Lưu Google Apps Script HTTPS Webhook URL vào bảng app_settings"""
+    """Save Google Apps Script HTTPS Webhook URL in app_settings"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     webhook_url = request.form.get('webhook_url', '').strip()
     try:
-        row = session.query(AppSetting).filter_by(key='webhook_url').first()
-        if row:
-            row.value = webhook_url
-        else:
-            session.add(AppSetting(key='webhook_url', value=webhook_url))
+        upsert_setting(session, 'webhook_url', webhook_url)
         session.commit()
         if webhook_url:
-            return redirect_dashboard("Đã lưu HTTPS Gmail Webhook URL thành công!", "success")
+            return redirect_dashboard("HTTPS Webhook URL saved.", "success")
         else:
-            return redirect_dashboard("Đã xóa cấu hình Webhook URL.", "success")
+            return redirect_dashboard("HTTPS Webhook URL cleared.", "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi lưu cấu hình: {e}", "error")
+        return redirect_dashboard(f"Failed to save Webhook URL: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/settings/smtp', methods=['POST'])
 @admin_required
 def save_smtp_settings():
-    """Lưu cấu hình SMTP_USERNAME và SMTP_PASSWORD vào bảng app_settings trên Database"""
+    """Save SMTP_USERNAME and SMTP_PASSWORD in app_settings"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     smtp_username = request.form.get('smtp_username', '').strip()
     smtp_password = request.form.get('smtp_password', '').strip()
 
     try:
-        user_row = session.query(AppSetting).filter_by(key='smtp_username').first()
-        if user_row:
-            user_row.value = smtp_username
-        else:
-            session.add(AppSetting(key='smtp_username', value=smtp_username))
-
+        upsert_setting(session, 'smtp_username', smtp_username)
         if smtp_password:
-            pw_row = session.query(AppSetting).filter_by(key='smtp_password').first()
-            if pw_row:
-                pw_row.value = smtp_password
-            else:
-                session.add(AppSetting(key='smtp_password', value=smtp_password))
-
+            upsert_setting(session, 'smtp_password', smtp_password)
         session.commit()
-        return redirect_dashboard(f"Đã lưu cấu hình SMTP ({smtp_username}) thành công!", "success")
+        return redirect_dashboard(f"SMTP configuration updated ({smtp_username}).", "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi lưu cấu hình SMTP: {e}", "error")
+        return redirect_dashboard(f"Failed to save SMTP settings: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/settings/password', methods=['POST'])
 @admin_required
 def change_admin_password():
-    """Đổi mật khẩu Admin trực tiếp trên giao diện Web"""
+    """Update administrator password"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     new_pw = request.form.get('new_password', '').strip()
     if len(new_pw) < 4:
         Session.remove()
-        return redirect_dashboard("Mật khẩu mới phải có ít nhất 4 ký tự!", "error")
+        return redirect_dashboard("New password must be at least 4 characters long.", "error")
 
     try:
-        row = session.query(AppSetting).filter_by(key='admin_password').first()
-        if row:
-            row.value = new_pw
-        else:
-            session.add(AppSetting(key='admin_password', value=new_pw))
+        upsert_setting(session, 'admin_password', new_pw)
         session.commit()
-        return redirect_dashboard("Đã cập nhật mật khẩu Admin mới thành công!", "success")
+        return redirect_dashboard("Administrator password updated.", "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi đổi mật khẩu: {e}", "error")
+        return redirect_dashboard(f"Failed to update password: {e}", "error")
     finally:
         Session.remove()
 
 def normalize_display_name(raw_name):
-    """Đảo lại tên có dấu phẩy: VD 'Chí, Đặng Minh' -> 'Đặng Minh Chí', tên không có dấu phẩy giữ nguyên"""
+    """Normalize comma-separated names: e.g. 'Chí, Đặng Minh' -> 'Đặng Minh Chí'"""
     cleaned = (raw_name or '').strip()
     if not cleaned:
-        return 'Nhân viên'
+        return 'Employee'
     if ',' in cleaned:
         parts = [p.strip() for p in cleaned.split(',', 1)]
         if len(parts) == 2 and parts[0] and parts[1]:
@@ -638,18 +737,18 @@ def normalize_display_name(raw_name):
 @app.route('/users/add', methods=['POST'])
 @admin_required
 def add_user():
-    """Thêm User mới trực tiếp từ giao diện Web vào bảng users (với token ngắn 8 ký tự)"""
+    """Add or update a single recipient with a guaranteed-unique 8-char token"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     name = normalize_display_name(request.form.get('name', ''))
     email = request.form.get('email', '').strip().lower()
-    department = request.form.get('department', '').strip() or 'Chưa phân loại'
+    department = request.form.get('department', '').strip() or 'Unassigned'
 
     if not email or '@' not in email:
         Session.remove()
-        return redirect_dashboard("Vui lòng nhập địa chỉ Email hợp lệ!", "error")
+        return redirect_dashboard("Please enter a valid email address.", "error")
 
     try:
         existing = session.query(User).filter_by(email=email).first()
@@ -657,10 +756,9 @@ def add_user():
             existing.name = name
             existing.department = department
             session.commit()
-            msg = f"Đã cập nhật thông tin cho user: {name} ({email})"
+            msg = f"Updated recipient {name} ({email})."
         else:
-            # Token rút gọn 8 ký tự giúp URL cực kỳ ngắn gọn (/v/a1b2c3d4)
-            token = uuid.uuid4().hex[:8]
+            token = generate_unique_token(session)
             new_user = User(
                 email=email,
                 name=name,
@@ -670,34 +768,35 @@ def add_user():
                 ip_address='N/A',
                 user_agent='N/A',
                 clicked_at='N/A',
-                last_sent_at='Chưa gửi'
+                last_sent_at='Not sent'
             )
             session.add(new_user)
             session.commit()
-            msg = f"Đã thêm thành công user: {name} ({email}) vào Database!"
+            msg = f"Added recipient {name} ({email})."
         return redirect_dashboard(msg, "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi khi thêm user: {e}", "error")
+        return redirect_dashboard(f"Failed to save recipient: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/users/import-bulk', methods=['POST'])
 @admin_required
 def import_bulk_users():
-    """Thêm hàng loạt các User đã được chọn từ bảng xem trước CSV vào Database"""
+    """Bulk import selected recipients from CSV preview with collision-free tokens"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     users_json = request.form.get('users_json', '[]')
     try:
         items = json.loads(users_json)
         if not isinstance(items, list) or len(items) == 0:
-            return redirect_dashboard("Chưa có user nào được chọn để thêm!", "error")
+            return redirect_dashboard("No recipients selected for import.", "error")
 
         existing_users = session.query(User).all()
         existing_map = {u.email.lower(): u for u in existing_users}
+        reserved_tokens = {u.token for u in existing_users if u.token}
 
         added_count = 0
         updated_count = 0
@@ -706,7 +805,7 @@ def import_bulk_users():
         for item in items:
             email = (item.get('email') or '').strip().lower()
             name = normalize_display_name(item.get('name'))
-            department = (item.get('department') or '').strip() or 'Chưa phân loại'
+            department = format_dept_display(item.get('department'))
 
             if not email or '@' not in email or email in seen_emails:
                 continue
@@ -718,7 +817,7 @@ def import_bulk_users():
                 existing_u.department = department
                 updated_count += 1
             else:
-                token = uuid.uuid4().hex[:8]
+                token = generate_unique_token(session, reserved_tokens)
                 new_user = User(
                     email=email,
                     name=name,
@@ -728,27 +827,27 @@ def import_bulk_users():
                     ip_address='N/A',
                     user_agent='N/A',
                     clicked_at='N/A',
-                    last_sent_at='Chưa gửi'
+                    last_sent_at='Not sent'
                 )
                 session.add(new_user)
                 added_count += 1
 
         session.commit()
-        msg = f"Đã nhập từ file CSV thành công: Thêm mới {added_count} user, Cập nhật {updated_count} user!"
+        msg = f"CSV import completed: {added_count} added, {updated_count} updated."
         return redirect_dashboard(msg, "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi khi nhập danh sách CSV: {e}", "error")
+        return redirect_dashboard(f"CSV import failed: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/users/delete/<int:user_id>', methods=['POST'])
 @admin_required
 def delete_user(user_id):
-    """Xóa 1 user khỏi bảng users"""
+    """Remove a single recipient"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     try:
         u = session.query(User).filter_by(id=user_id).first()
@@ -756,21 +855,21 @@ def delete_user(user_id):
             email = u.email
             session.delete(u)
             session.commit()
-            return redirect_dashboard(f"Đã xóa user {email} khỏi Database.", "success")
-        return redirect_dashboard("Không tìm thấy user cần xóa.", "error")
+            return redirect_dashboard(f"Removed recipient {email}.", "success")
+        return redirect_dashboard("Recipient not found.", "error")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi khi xóa user: {e}", "error")
+        return redirect_dashboard(f"Failed to delete recipient: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/users/send/<int:user_id>', methods=['POST'])
 @admin_required
 def send_single_user(user_id):
-    """Gửi email cho 1 user cụ thể"""
+    """Send simulation email to a single recipient"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
@@ -778,7 +877,7 @@ def send_single_user(user_id):
     try:
         u = session.query(User).filter_by(id=user_id).first()
         if not u:
-            return redirect_dashboard("Không tìm thấy user!", "error")
+            return redirect_dashboard("Recipient not found.", "error")
 
         unique_link = f"{base_url}/{tracking_path}/{u.token}"
         ok, detail_msg = send_phishing_email(u.email, u.name, unique_link)
@@ -790,7 +889,7 @@ def send_single_user(user_id):
             return redirect_dashboard(detail_msg, "error")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi hệ thống: {e}", "error")
+        return redirect_dashboard(f"System error: {e}", "error")
     finally:
         Session.remove()
 
@@ -798,55 +897,99 @@ def send_single_user(user_id):
 @app.route('/reload', methods=['POST', 'GET'])
 @admin_required
 def send_all_users():
-    """Gửi email chiến dịch cho toàn bộ user trong bảng users"""
+    """
+    Launch asynchronous background email delivery (all recipients or unsent-only).
+    Prevents Gunicorn worker timeouts on large recipient lists.
+    """
+    global campaign_send_state
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
+    mode = (request.form.get('mode') or request.args.get('mode') or 'all').strip().lower()
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
 
     try:
-        users = session.query(User).all()
+        with _send_lock:
+            if campaign_send_state["running"]:
+                sent_now = campaign_send_state["sent"]
+                total_now = campaign_send_state["total"]
+                return redirect_dashboard(
+                    f"A bulk email job is already running in the background ({sent_now}/{total_now} sent).",
+                    "info"
+                )
+
+        users = session.query(User).order_by(User.id.asc()).all()
         if not users:
-            return redirect_dashboard("Danh sách User đang trống! Hãy thêm User ở form bên dưới trước khi gửi.", "error")
+            return redirect_dashboard("Recipient list is empty. Add recipients before launching a campaign.", "error")
 
-        success_count = 0
-        last_err = ""
-        now_str = get_vn_now_str()
-
-        for u in users:
-            unique_link = f"{base_url}/{tracking_path}/{u.token}"
-            ok, detail_msg = send_phishing_email(u.email, u.name, unique_link)
-            if ok:
-                success_count += 1
-                u.last_sent_at = now_str
-            else:
-                last_err = detail_msg
-                if "bị chặn" in detail_msg or "timed out" in detail_msg.lower():
-                    break
-
-        session.commit()
-
-        if success_count == len(users):
-            return redirect_dashboard(f"Đã gửi thành công {success_count}/{len(users)} email (ẩn link bằng Hyperlink)!", "success")
-        elif success_count > 0:
-            return redirect_dashboard(f"Đã gửi {success_count}/{len(users)} email. Lỗi: {last_err}", "error")
+        if mode == 'unsent':
+            target_users = [u for u in users if is_unsent_value(u.last_sent_at)]
+            if not target_users:
+                return redirect_dashboard("All recipients have already been sent an email.", "info")
         else:
-            return redirect_dashboard(f"Không thể gửi email: {last_err}", "error")
+            target_users = users
+
+        target_ids = [u.id for u in target_users]
+
+        # For small batches (<= 3 recipients), send synchronously for immediate feedback
+        if len(target_ids) <= 3:
+            success_count = 0
+            last_err = ""
+            now_str = get_vn_now_str()
+            for u in target_users:
+                unique_link = f"{base_url}/{tracking_path}/{u.token}"
+                ok, detail_msg = send_phishing_email(u.email, u.name, unique_link)
+                if ok:
+                    success_count += 1
+                    u.last_sent_at = now_str
+                else:
+                    last_err = detail_msg
+                    if "blocked" in detail_msg.lower() or "timed out" in detail_msg.lower():
+                        break
+            session.commit()
+            if success_count == len(target_users):
+                return redirect_dashboard(f"Sent simulation email to {success_count}/{len(target_users)} recipient(s).", "success")
+            elif success_count > 0:
+                return redirect_dashboard(f"Sent {success_count}/{len(target_users)} email(s). Last error: {last_err}", "error")
+            else:
+                return redirect_dashboard(f"Delivery failed: {last_err}", "error")
+
+        # For larger lists (> 3 recipients), dispatch background worker thread
+        with _send_lock:
+            campaign_send_state["running"] = True
+            campaign_send_state["sent"] = 0
+            campaign_send_state["failed"] = 0
+            campaign_send_state["total"] = len(target_ids)
+            campaign_send_state["last_error"] = ""
+            campaign_send_state["finished_at"] = ""
+
+        worker = threading.Thread(
+            target=_background_send_worker,
+            args=(target_ids, base_url, tracking_path),
+            daemon=True
+        )
+        worker.start()
+
+        label = "unsent recipients" if mode == 'unsent' else "all recipients"
+        return redirect_dashboard(
+            f"Started background delivery for {len(target_ids)} {label}. Delivery status will update automatically.",
+            "success"
+        )
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi khi gửi chiến dịch: {e}", "error")
+        return redirect_dashboard(f"Campaign launch error: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/db/clear-clicks', methods=['POST'])
 @admin_required
 def clear_clicks():
-    """Xóa sạch bảng click_logs và đặt lại trạng thái clicked=False cho toàn bộ bảng users"""
+    """Clear click_logs and reset all recipients to Safe"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     try:
         session.query(ClickLog).delete()
@@ -857,33 +1000,33 @@ def clear_clicks():
             u.user_agent = 'N/A'
             u.clicked_at = 'N/A'
         session.commit()
-        return redirect_dashboard("Đã xóa sạch lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN!", "success")
+        return redirect_dashboard("Click history cleared and all recipients reset to Safe.", "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi khi xóa lịch sử click: {e}", "error")
+        return redirect_dashboard(f"Failed to reset click history: {e}", "error")
     finally:
         Session.remove()
 
 @app.route('/db/clear-all', methods=['POST'])
 @admin_required
 def clear_all_tables():
-    """Xóa sạch dữ liệu trong cả 2 bảng: users và click_logs"""
+    """Wipe both users and click_logs tables"""
     session = get_db_session()
     if not session:
-        return redirect_dashboard(f"Lỗi kết nối Database: {last_db_error}", "error")
+        return redirect_dashboard(f"Database connection error: {last_db_error}", "error")
 
     try:
         session.query(ClickLog).delete()
         session.query(User).delete()
         session.commit()
-        return redirect_dashboard("Đã xóa trắng toàn bộ dữ liệu bảng Users và bảng Click Logs trên Database!", "success")
+        return redirect_dashboard("All recipients and click logs have been permanently deleted.", "success")
     except Exception as e:
         session.rollback()
-        return redirect_dashboard(f"Lỗi khi xóa toàn bộ bảng: {e}", "error")
+        return redirect_dashboard(f"Failed to clear database: {e}", "error")
     finally:
         Session.remove()
 
-# Danh sách các dải IP của Bot quét link tự động (Microsoft Safe Links, Defender, Azure, Google Proxy...)
+# Known automated link-scanner IP prefixes (Microsoft Safe Links, Defender, Azure, Google Proxy...)
 SCANNER_IP_PREFIXES = (
     "57.150.", "57.151.", "57.152.", "57.153.", "57.154.", "57.155.", "57.156.", "57.157.",
     "40.94.", "40.107.", "104.47.", "52.100.", "52.101.", "66.102.", "66.249.", "72.14."
@@ -895,7 +1038,7 @@ SCANNER_UA_KEYWORDS = (
 )
 
 def is_scanner_bot(ip_addr, ua_str):
-    """Kiểm tra xem request có phải từ Bot quét link tự động của Microsoft/Google hay không"""
+    """Detect automated security link scanners by IP range or User-Agent signature"""
     ip_clean = (ip_addr or "").strip()
     ua_lower = (ua_str or "").lower()
     if any(ip_clean.startswith(prefix) for prefix in SCANNER_IP_PREFIXES):
@@ -904,7 +1047,6 @@ def is_scanner_bot(ip_addr, ua_str):
         return True
     return False
 
-# Route bắt bẫy click link mã hóa token (Chống Bot quét tự động của Microsoft Safe Links)
 @app.route('/v/<token>', methods=['GET', 'POST'])
 @app.route('/verify/portal-auth/<token>', methods=['GET', 'POST'])
 @app.route('/phish/<token>', methods=['GET', 'POST'])
@@ -917,10 +1059,9 @@ def handle_click(token):
 
     user_agent = request.headers.get('User-Agent', 'N/A')
 
-    # Kiểm tra token có tồn tại không
     session = get_db_session()
     user_exists = False
-    user_display_name = "Nhân viên"
+    user_display_name = "Employee"
     if session:
         try:
             db_user = session.query(User).filter_by(token=token).first()
@@ -933,18 +1074,23 @@ def handle_click(token):
     if not user_exists:
         return redirect(url_for('home'))
 
-    # BƯỚC 1: Nếu là request GET hoặc đến từ IP Bot của Microsoft (VD: 57.155.170.192)
-    # -> Trả về trang Biểu mẫu nội bộ sạch 100% (HTTP 200 OK), KHÔNG ghi nhận click ảo, KHÔNG chứa từ khóa Phishing
-    if request.method == 'GET' or is_scanner_bot(ip_address, user_agent):
+    # Require POST with explicit human_confirm == '1' AND non-scanner IP/User-Agent
+    is_verified_human_post = (
+        request.method == 'POST'
+        and request.form.get('human_confirm') == '1'
+        and not is_scanner_bot(ip_address, user_agent)
+    )
+
+    if not is_verified_human_post:
         if is_scanner_bot(ip_address, user_agent):
-            safe_log(f"[BOT BLOCKED] Đã chặn Bot quét link tự động từ IP: {ip_address} | UA: {user_agent}")
+            safe_log(f"[BOT BLOCKED] Ignored automated link scanner from IP: {ip_address} | UA: {user_agent}")
         return render_template_string("""
         <!DOCTYPE html>
-        <html lang="vi">
+        <html lang="en">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Biểu Mẫu Rà Soát Thông Tin Nhân Sự</title>
+            <title>Employee Information Verification Portal</title>
             <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
             <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
             <style>
@@ -956,15 +1102,15 @@ def handle_click(token):
         <body class="flex items-center justify-center min-h-screen p-6">
             <div class="bg-white border border-gray-200 rounded-md p-8 sm:p-10 max-w-md w-full">
                 <p class="text-xs uppercase tracking-widest text-gray-400 font-medium mb-2">Internal Portal</p>
-                <h1 class="text-lg font-semibold text-gray-900 mb-3">Cổng Thông Tin Hành Chính - Nhân Sự</h1>
+                <h1 class="text-lg font-semibold text-gray-900 mb-3">HR &amp; Administration Portal</h1>
                 <p class="text-sm text-gray-500 leading-relaxed mb-8">
-                    Xin chào <strong class="text-gray-900 font-medium">{{ user_display_name }}</strong>, hệ thống đang tải biểu mẫu rà soát chế độ phúc lợi định kỳ của bạn.
+                    Welcome <strong class="text-gray-900 font-medium">{{ user_display_name }}</strong>, loading your periodic employee benefits and account verification form.
                 </p>
                 <form id="verifyForm" method="POST" action="/v/{{ token }}">
                     <input type="hidden" name="tz_offset" id="tz_offset" value="">
                     <input type="hidden" name="human_confirm" id="human_confirm" value="1">
                     <button type="submit" class="w-full py-2.5 px-4 btn-ink font-medium rounded text-sm transition">
-                        Xem &amp; Xác Nhận Biểu Mẫu
+                        Continue to Form
                     </button>
                 </form>
             </div>
@@ -979,11 +1125,9 @@ def handle_click(token):
                         submitted = true;
                         document.getElementById('verifyForm').submit();
                     }
-                    // Nếu trình duyệt người thật ở múi giờ Việt Nam (UTC+7 => offset -420), tự động chuyển tiếp mượt mà
                     if (!isBot && tzOffset === -420) {
                         setTimeout(submitHuman, 450);
                     }
-                    // Hoặc ngay khi người dùng di chuột / chạm màn hình cảm ứng
                     window.addEventListener('mousemove', submitHuman, { once: true });
                     window.addEventListener('touchstart', submitHuman, { once: true });
                 })();
@@ -992,7 +1136,7 @@ def handle_click(token):
         </html>
         """, token=token, user_display_name=user_display_name)
 
-    # BƯỚC 2: Khi nhận POST từ trình duyệt người dùng thật -> Ghi nhận lượt Click vào Database
+    # Verified human click -> log event to database
     timestamp = get_vn_now_str()
     session = get_db_session()
     if session:
@@ -1015,10 +1159,10 @@ def handle_click(token):
                 )
                 session.add(log_entry)
                 session.commit()
-                safe_log(f"[REAL CLICK LOGGED] User: {db_user.name} ({db_user.email}) | IP: {ip_address}")
+                safe_log(f"[REAL CLICK LOGGED] Recipient: {db_user.name} ({db_user.email}) | IP: {ip_address}")
         except Exception as e:
             session.rollback()
-            safe_log(f"[DB LỖI GHI LOG] {e}")
+            safe_log(f"[DB LOG ERROR] {e}")
         finally:
             Session.remove()
 
@@ -1031,16 +1175,15 @@ def handle_click(token):
 @app.route('/awareness')
 def awareness_page():
     """
-    Trang giáo dục nhận thức an toàn thông tin — Phong cách Minimalism (NameThatUI).
-    Tuyệt đối KHÔNG có nút dẫn về Trang chủ hay Dashboard của Admin.
+    Security Awareness Briefing Page — Minimalism (NameThatUI).
     """
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="vi">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Cảnh Báo Nhận Thức An Toàn Thông Tin</title>
+        <title>Security Awareness Notice</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -1057,40 +1200,40 @@ def awareness_page():
             </div>
 
             <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900 mb-3">
-                Bạn vừa nhấp vào một liên kết mô phỏng Phishing
+                You clicked on a simulated phishing link
             </h1>
             <p class="text-gray-500 mb-8 text-sm sm:text-base leading-relaxed">
-                Đây là bài kiểm tra nhận thức an toàn thông tin định kỳ của tổ chức nhằm giúp nhân viên rèn luyện kỹ năng nhận diện và phòng ngừa các cuộc tấn công giả mạo thực tế.
+                This is an authorized security awareness exercise conducted by our organization to help employees recognize and prevent real-world social engineering attacks.
             </p>
 
             <div class="border-t border-b border-gray-200 py-6 mb-8">
-                <h2 class="text-xs uppercase tracking-widest text-gray-400 font-semibold mb-4">Các quy tắc kiểm tra an toàn</h2>
+                <h2 class="text-xs uppercase tracking-widest text-gray-400 font-semibold mb-4">Security Verification Guidelines</h2>
                 <div class="space-y-4 text-sm text-gray-700 leading-relaxed">
                     <div class="flex items-start gap-3">
                         <span class="text-xs font-mono text-gray-400 mt-0.5">01</span>
-                        <p><strong class="text-gray-900 font-medium">Kiểm tra liên kết ẩn (Hyperlink):</strong> Luôn rê chuột (hover) hoặc nhấn giữ vào liên kết để kiểm tra tên miền đích thực sự trước khi nhấp.</p>
+                        <p><strong class="text-gray-900 font-medium">Inspect Hyperlinks:</strong> Always hover over links or long-press on mobile devices to verify the actual destination domain before clicking.</p>
                     </div>
                     <div class="flex items-start gap-3">
                         <span class="text-xs font-mono text-gray-400 mt-0.5">02</span>
-                        <p><strong class="text-gray-900 font-medium">Cảnh giác với yếu tố khẩn cấp:</strong> Các thông báo yêu cầu xác thực gấp trong 24 giờ thường là dấu hiệu thao túng tâm lý.</p>
+                        <p><strong class="text-gray-900 font-medium">Beware of Artificial Urgency:</strong> Messages demanding immediate verification within 24 hours are a common psychological manipulation tactic.</p>
                     </div>
                     <div class="flex items-start gap-3">
                         <span class="text-xs font-mono text-gray-400 mt-0.5">03</span>
-                        <p><strong class="text-gray-900 font-medium">Đối chiếu địa chỉ người gửi:</strong> Tên hiển thị có thể giống phòng ban nội bộ, nhưng hãy luôn kiểm tra phần đuôi tên miền sau dấu <code>@</code>.</p>
+                        <p><strong class="text-gray-900 font-medium">Verify the Sender Address:</strong> Display names can be easily spoofed. Always inspect the actual domain name after the <code>@</code> symbol.</p>
                     </div>
                     <div class="flex items-start gap-3">
                         <span class="text-xs font-mono text-gray-400 mt-0.5">04</span>
-                        <p><strong class="text-gray-900 font-medium">Xác minh qua kênh độc lập:</strong> Khi nghi ngờ, hãy liên hệ trực tiếp bộ phận IT hoặc Nhân sự qua kênh nội bộ chính thức.</p>
+                        <p><strong class="text-gray-900 font-medium">Confirm via Independent Channels:</strong> When in doubt, contact IT Support or HR directly through official internal communication channels.</p>
                     </div>
                 </div>
             </div>
 
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <p class="text-xs text-gray-400">
-                    An toàn thông tin bắt đầu từ sự cẩn trọng của mỗi cá nhân.
+                    Information security starts with individual vigilance.
                 </p>
                 <button type="button" onclick="closeAwarenessPage()" class="px-6 py-2.5 btn-ink text-xs uppercase tracking-wider font-medium rounded transition cursor-pointer">
-                    Đã hiểu &amp; Đóng trang
+                    Acknowledge &amp; Close
                 </button>
             </div>
         </div>
@@ -1107,8 +1250,8 @@ def awareness_page():
                     card.className = 'bg-white border border-gray-200 rounded-md p-10 max-w-md w-full text-center';
                     card.innerHTML =
                         '<p class="text-xs uppercase tracking-widest text-gray-400 font-medium mb-2">Completed</p>' +
-                        '<h2 class="text-lg font-semibold text-gray-900 mb-2">Đã ghi nhận hoàn tất</h2>' +
-                        '<p class="text-sm text-gray-500">Cảm ơn bạn đã hoàn thành nội dung hướng dẫn an toàn thông tin.</p>';
+                        '<h2 class="text-lg font-semibold text-gray-900 mb-2">Acknowledgment Recorded</h2>' +
+                        '<p class="text-sm text-gray-500">Thank you for completing this security awareness briefing.</p>';
                 }
                 setTimeout(function() {
                     window.location.replace('https://www.google.com');
@@ -1122,20 +1265,32 @@ def awareness_page():
 @app.route('/api/live-state')
 @admin_required
 def api_live_state():
-    """API nhẹ kiểm tra trạng thái dữ liệu mới theo thời gian thực (Realtime Polling)"""
+    """Lightweight real-time state endpoint for 3s AJAX polling (tracks clicks AND email send progress)"""
     session = get_db_session()
     if not session:
         return json.dumps({"ok": False}), 200, {'Content-Type': 'application/json'}
     try:
-        total_users = session.query(User).count()
-        clicked_users = session.query(User).filter_by(clicked=True).count()
+        users = session.query(User).all()
+        total_users = len(users)
+        clicked_users = sum(1 for u in users if u.clicked)
+        sent_users = sum(1 for u in users if not is_unsent_value(u.last_sent_at))
+        latest_sent_at = max((u.last_sent_at for u in users if not is_unsent_value(u.last_sent_at)), default="")
+
         total_logs = session.query(ClickLog).count()
         latest_log = session.query(ClickLog).order_by(ClickLog.id.desc()).first()
 
         latest_log_id = latest_log.id if latest_log else 0
         latest_click_text = ""
         if latest_log:
-            latest_click_text = f"{latest_log.user_name} ({latest_log.user_email}) vừa nhấp vào liên kết lúc {latest_log.clicked_at}"
+            latest_click_text = f"{latest_log.user_name} ({latest_log.user_email}) clicked the link at {latest_log.clicked_at}"
+
+        with _send_lock:
+            sending_running = campaign_send_state["running"]
+            sending_sent = campaign_send_state["sent"]
+            sending_total = campaign_send_state["total"]
+            sending_failed = campaign_send_state["failed"]
+
+        sent_sig = f"{sent_users}:{latest_sent_at}:{int(sending_running)}:{sending_sent}:{sending_failed}"
 
         data = {
             "ok": True,
@@ -1143,7 +1298,11 @@ def api_live_state():
             "clicked_users": clicked_users,
             "total_logs": total_logs,
             "latest_log_id": latest_log_id,
-            "latest_click_text": latest_click_text
+            "latest_click_text": latest_click_text,
+            "sent_sig": sent_sig,
+            "sending_running": sending_running,
+            "sending_sent": sending_sent,
+            "sending_total": sending_total
         }
         return json.dumps(data), 200, {'Content-Type': 'application/json'}
     except Exception:
@@ -1155,7 +1314,7 @@ def api_live_state():
 @app.route('/dashboard')
 @admin_required
 def dashboard():
-    """Bảng điều khiển chỉ dành riêng cho Admin đã đăng nhập"""
+    """Minimalist Admin Console Dashboard"""
     msg = flask_session.pop('flash_msg', '') or request.args.get('msg', '')
     status = flask_session.pop('flash_status', '') or request.args.get('status', 'info')
 
@@ -1171,12 +1330,13 @@ def dashboard():
                     'id': u.id,
                     'name': u.name,
                     'email': u.email,
-                    'department': u.department,
+                    'department': format_dept_display(u.department),
                     'token': u.token,
                     'clicked': u.clicked,
                     'ip': u.ip_address,
                     'timestamp': u.clicked_at,
-                    'last_sent_at': u.last_sent_at
+                    'last_sent_at': format_sent_display(u.last_sent_at),
+                    'is_unsent': is_unsent_value(u.last_sent_at)
                 })
 
             db_logs = session.query(ClickLog).order_by(ClickLog.id.desc()).limit(50).all()
@@ -1185,38 +1345,46 @@ def dashboard():
                     'id': lg.id,
                     'email': lg.user_email,
                     'name': lg.user_name,
-                    'department': lg.department,
+                    'department': format_dept_display(lg.department),
                     'ip': lg.ip_address,
                     'user_agent': lg.user_agent,
                     'clicked_at': lg.clicked_at
                 })
         except Exception as e:
             session.rollback()
-            msg = f"Lỗi truy vấn Database: {e}"
+            msg = f"Database query error: {e}"
             status = "error"
         finally:
             Session.remove()
     elif not msg:
-        msg = f"Không thể kết nối Database: {last_db_error}"
+        msg = f"Database connection unavailable: {last_db_error}"
         status = "error"
 
     total_users = len(user_list)
     clicked_users = sum(1 for u in user_list if u['clicked'])
+    unsent_users = sum(1 for u in user_list if u['is_unsent'])
     click_rate = (clicked_users / total_users * 100) if total_users > 0 else 0
+
+    with _send_lock:
+        sending_running = campaign_send_state["running"]
+        sending_sent = campaign_send_state["sent"]
+        sending_total = campaign_send_state["total"]
 
     base_url = get_active_base_url()
     tracking_path = config.get("campaign", {}).get("tracking_path", "/v").strip("/")
     saved_webhook = get_saved_webhook_url()
     saved_smtp_username = get_saved_smtp_username()
     saved_smtp_password = get_saved_smtp_password()
+    saved_sender_name = get_saved_sender_name()
+    saved_email_subject = get_saved_email_subject()
 
     html_content = """
     <!DOCTYPE html>
-    <html lang="vi">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Phishing Simulation — Admin</title>
+        <title>Phishing Simulation — Admin Console</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -1262,30 +1430,30 @@ def dashboard():
                     <!-- Secondary Actions (Desktop >= lg) -->
                     <div class="hidden lg:flex items-center gap-2">
                         <button type="button" onclick="toggleDrawer(true)" class="px-3.5 py-2 btn-outline rounded text-xs font-medium transition">
-                            Cài đặt
+                            Settings
                         </button>
 
-                        <form action="/db/clear-clicks" method="POST" class="inline" onsubmit="return confirm('Xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
+                        <form action="/db/clear-clicks" method="POST" class="inline" onsubmit="return confirm('Reset click history and mark all recipients as Safe?');">
                             <button type="submit" class="px-3.5 py-2 btn-outline rounded text-xs font-medium transition">
-                                Đặt lại Click
+                                Reset Clicks
                             </button>
                         </form>
 
-                        <form action="/db/clear-all" method="POST" class="inline" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click?');">
+                        <form action="/db/clear-all" method="POST" class="inline" onsubmit="return confirm('WARNING: Permanently delete ALL recipients and click logs?');">
                             <button type="submit" class="px-3.5 py-2 bg-white hover:bg-red-50 text-red-600 border border-gray-200 hover:border-red-200 rounded text-xs font-medium transition">
-                                Xóa dữ liệu
+                                Clear All
                             </button>
                         </form>
 
                         <a href="/logout" class="px-3.5 py-2 text-gray-500 hover:text-gray-900 text-xs font-medium transition">
-                            Đăng xuất
+                            Sign Out
                         </a>
                     </div>
 
                     <!-- Mobile / Tablet Menu Button (< lg) -->
                     <button type="button" onclick="toggleDrawer(true)"
                         class="lg:hidden inline-flex items-center justify-center p-2 rounded text-gray-700 btn-outline focus:outline-none"
-                        aria-label="Mở menu cài đặt">
+                        aria-label="Open settings drawer">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16"/>
                         </svg>
@@ -1305,7 +1473,7 @@ def dashboard():
                         <div class="px-6 py-5 border-b border-gray-200 flex items-center justify-between">
                             <div>
                                 <p class="label-micro">System Configuration</p>
-                                <h2 class="text-sm font-semibold text-gray-900 mt-0.5">Cài đặt &amp; Quản trị</h2>
+                                <h2 class="text-sm font-semibold text-gray-900 mt-0.5">Settings &amp; Administration</h2>
                             </div>
                             <button type="button" onclick="toggleDrawer(false)" class="p-1.5 rounded text-gray-400 hover:text-gray-900 transition">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1315,35 +1483,57 @@ def dashboard():
                         </div>
 
                         <div class="p-6 space-y-8 divide-y divide-gray-100">
-                            <!-- 1. HTTPS Gmail Webhook -->
+                            <!-- 1. Campaign Email Content -->
                             <div class="space-y-3">
+                                <span class="label-micro block">01 / Campaign Email Template</span>
+                                <form action="/settings/campaign" method="POST" class="space-y-3">
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Sender Display Name</label>
+                                        <input type="text" name="sender_name" value="{{ saved_sender_name }}" required
+                                            placeholder="HR Portal"
+                                            class="w-full px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Email Subject Line</label>
+                                        <input type="text" name="email_subject" value="{{ saved_email_subject }}" required
+                                            placeholder="Important: Periodic Account Verification"
+                                            class="w-full px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
+                                    </div>
+                                    <button type="submit" class="w-full py-2 btn-ink font-medium rounded text-xs transition">
+                                        Save Email Template
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- 2. HTTPS Gmail Webhook -->
+                            <div class="pt-6 space-y-3">
                                 <div class="flex items-center justify-between">
-                                    <span class="label-micro">01 / HTTPS Webhook</span>
+                                    <span class="label-micro">02 / HTTPS Webhook</span>
                                     <span class="inline-flex items-center gap-1.5 text-xs font-medium {% if saved_webhook %}text-gray-900{% else %}text-gray-400{% endif %}">
                                         <span class="w-1.5 h-1.5 rounded-full {% if saved_webhook %}bg-green-500{% else %}bg-gray-300{% endif %}"></span>
-                                        {% if saved_webhook %}Đã kết nối{% else %}Chưa cấu hình{% endif %}
+                                        {% if saved_webhook %}Connected{% else %}Not configured{% endif %}
                                     </span>
                                 </div>
                                 <p class="text-xs text-gray-500 leading-relaxed">
-                                    Google Apps Script Webhook giúp gửi email qua cổng 443 trên Render.
+                                    Google Apps Script Webhook delivers emails over HTTPS port 443.
                                 </p>
                                 <form action="/settings/webhook" method="POST" class="space-y-2.5">
                                     <input type="url" name="webhook_url" value="{{ saved_webhook }}"
                                         placeholder="https://script.google.com/macros/s/.../exec"
                                         class="w-full px-3 py-2 border border-gray-200 rounded text-xs font-mono-code bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                                     <button type="submit" class="w-full py-2 btn-ink font-medium rounded text-xs transition">
-                                        Lưu Webhook URL
+                                        Save Webhook URL
                                     </button>
                                 </form>
                             </div>
 
-                            <!-- 2. SMTP_USERNAME & SMTP_PASSWORD -->
+                            <!-- 3. SMTP_USERNAME & SMTP_PASSWORD -->
                             <div class="pt-6 space-y-3">
                                 <div class="flex items-center justify-between">
-                                    <span class="label-micro">02 / Tài khoản SMTP</span>
+                                    <span class="label-micro">03 / SMTP Credentials</span>
                                     <span class="inline-flex items-center gap-1.5 text-xs font-medium {% if saved_smtp_username %}text-gray-900{% else %}text-gray-400{% endif %}">
                                         <span class="w-1.5 h-1.5 rounded-full {% if saved_smtp_username %}bg-green-500{% else %}bg-gray-300{% endif %}"></span>
-                                        {% if saved_smtp_username %}Đã cấu hình{% else %}Chưa cấu hình{% endif %}
+                                        {% if saved_smtp_username %}Configured{% else %}Not configured{% endif %}
                                     </span>
                                 </div>
                                 <form action="/settings/smtp" method="POST" class="space-y-3">
@@ -1360,37 +1550,37 @@ def dashboard():
                                             class="w-full px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                                     </div>
                                     <button type="submit" class="w-full py-2 btn-ink font-medium rounded text-xs transition">
-                                        Lưu cấu hình SMTP
+                                        Save SMTP Settings
                                     </button>
                                 </form>
                             </div>
 
-                            <!-- 3. Admin Password -->
+                            <!-- 4. Admin Password -->
                             <div class="pt-6 space-y-3">
-                                <span class="label-micro block">03 / Bảo mật Admin</span>
+                                <span class="label-micro block">04 / Admin Security</span>
                                 <form action="/settings/password" method="POST" class="flex gap-2">
-                                    <input type="password" name="new_password" required placeholder="Mật khẩu Admin mới..."
+                                    <input type="password" name="new_password" required placeholder="New admin password..."
                                         class="flex-1 px-3 py-2 border border-gray-200 rounded text-xs bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                                     <button type="submit" class="px-4 py-2 btn-outline font-medium rounded text-xs transition whitespace-nowrap">
-                                        Cập nhật
+                                        Update
                                     </button>
                                 </form>
                             </div>
 
-                            <!-- 4. Database Maintenance -->
+                            <!-- 5. Database Maintenance -->
                             <div class="pt-6 space-y-2.5">
-                                <span class="label-micro block mb-2">04 / Quản trị dữ liệu</span>
+                                <span class="label-micro block mb-2">05 / Data Management</span>
 
-                                <form action="/db/clear-clicks" method="POST" onsubmit="return confirm('Bạn muốn xóa lịch sử Click và đặt lại trạng thái tất cả User về AN TOÀN?');">
+                                <form action="/db/clear-clicks" method="POST" onsubmit="return confirm('Reset click history and mark all recipients as Safe?');">
                                     <button type="submit" class="w-full py-2 px-4 btn-outline rounded font-medium text-xs transition text-left flex items-center justify-between">
-                                        <span>Đặt lại lịch sử Click (Giữ User)</span>
+                                        <span>Reset Click History (Keep Recipients)</span>
                                         <span class="text-gray-400">↺</span>
                                     </button>
                                 </form>
 
-                                <form action="/db/clear-all" method="POST" onsubmit="return confirm('CẢNH BÁO: Bạn có chắc chắn muốn XÓA SẠCH toàn bộ User và Lịch sử Click trong Database?');">
+                                <form action="/db/clear-all" method="POST" onsubmit="return confirm('WARNING: Permanently delete ALL recipients and click logs from the database?');">
                                     <button type="submit" class="w-full py-2 px-4 bg-white hover:bg-red-50 text-red-600 border border-gray-200 hover:border-red-200 rounded font-medium text-xs transition text-left flex items-center justify-between">
-                                        <span>Xóa trắng toàn bộ Database</span>
+                                        <span>Wipe Entire Database</span>
                                         <span>×</span>
                                     </button>
                                 </form>
@@ -1401,7 +1591,7 @@ def dashboard():
                     <!-- Drawer Footer -->
                     <div class="p-6 border-t border-gray-200">
                         <a href="/logout" class="w-full py-2.5 px-4 btn-outline rounded font-medium text-xs flex items-center justify-center transition">
-                            Đăng xuất khỏi phiên quản trị
+                            Sign Out of Admin Console
                         </a>
                     </div>
                 </div>
@@ -1418,67 +1608,67 @@ def dashboard():
                     <span class="w-1.5 h-1.5 rounded-full flex-shrink-0 {% if status == 'error' %}bg-red-600{% else %}bg-gray-900{% endif %}"></span>
                     <span>{{ msg }}</span>
                 </div>
-                <button type="button" onclick="dismissAlertBanner()" class="text-xs text-gray-400 hover:text-gray-900 font-medium flex-shrink-0">Đóng</button>
+                <button type="button" onclick="dismissAlertBanner()" class="text-xs text-gray-400 hover:text-gray-900 font-medium flex-shrink-0">Dismiss</button>
             </div>
             {% endif %}
 
             <!-- Architectural KPI Grid (Minimalist Hairline Matrix) -->
             <div id="liveKpiGrid" class="bg-white border border-gray-200 rounded-md grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 sm:divide-x divide-gray-200">
                 <div class="p-5 sm:p-7">
-                    <p class="label-micro">Tổng mục tiêu</p>
+                    <p class="label-micro">Total Recipients</p>
                     <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ total_users }}</p>
                 </div>
                 <div class="p-5 sm:p-7 border-l border-gray-200">
-                    <p class="label-micro">Đã nhấp liên kết</p>
+                    <p class="label-micro">Clicked Link</p>
                     <p class="text-3xl sm:text-4xl font-light tracking-tight {% if clicked_users > 0 %}text-red-600{% else %}text-gray-900{% endif %} mt-2 font-mono-code">{{ clicked_users }}</p>
                 </div>
                 <div class="p-5 sm:p-7">
-                    <p class="label-micro">Tỷ lệ sập bẫy</p>
+                    <p class="label-micro">Click Rate</p>
                     <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ '{:.1f}'.format(click_rate) }}%</p>
                 </div>
                 <div class="p-5 sm:p-7 border-l border-gray-200">
-                    <p class="label-micro">Tổng lượt ghi nhận</p>
+                    <p class="label-micro">Total Click Events</p>
                     <p class="text-3xl sm:text-4xl font-light tracking-tight text-gray-900 mt-2 font-mono-code">{{ click_logs|length }}</p>
                 </div>
             </div>
 
-            <!-- Add Target User & CSV Import Panel -->
+            <!-- Add Target Recipient & CSV Import Panel -->
             <div class="bg-white border border-gray-200 rounded-md p-5 sm:p-7 space-y-6">
                 <div>
                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
                         <div>
                             <p class="label-micro">Target Provisioning</p>
-                            <h2 class="text-sm sm:text-base font-semibold text-gray-900 mt-0.5">Thêm mục tiêu diễn tập</h2>
+                            <h2 class="text-sm sm:text-base font-semibold text-gray-900 mt-0.5">Add Campaign Recipients</h2>
                         </div>
                         <!-- Minimal CSV Upload Trigger -->
                         <label class="inline-flex items-center justify-center gap-2 px-3.5 py-2 btn-outline rounded text-xs font-medium cursor-pointer transition">
                             <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
                             </svg>
-                            <span>Nhập từ file CSV</span>
+                            <span>Import CSV</span>
                             <input type="file" id="csvFileInput" accept=".csv,text/csv" class="hidden" onchange="handleCsvFile(this)">
                         </label>
                     </div>
 
                     <form action="/users/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 items-end">
                         <div>
-                            <label class="block label-micro mb-1.5">Họ và tên *</label>
-                            <input type="text" name="name" required placeholder="Nguyễn Văn A"
+                            <label class="block label-micro mb-1.5">Full Name *</label>
+                            <input type="text" name="name" required placeholder="Nguyen Van A"
                                 class="w-full px-3 py-2 border border-gray-200 rounded text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                         </div>
                         <div>
-                            <label class="block label-micro mb-1.5">Địa chỉ Email *</label>
+                            <label class="block label-micro mb-1.5">Email Address *</label>
                             <input type="email" name="email" required placeholder="name@company.com"
                                 class="w-full px-3 py-2 border border-gray-200 rounded text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                         </div>
                         <div>
-                            <label class="block label-micro mb-1.5">Phòng ban</label>
-                            <input type="text" name="department" placeholder="CNTT / Kế toán"
+                            <label class="block label-micro mb-1.5">Department</label>
+                            <input type="text" name="department" placeholder="IT / Finance"
                                 class="w-full px-3 py-2 border border-gray-200 rounded text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
                         </div>
                         <div>
                             <button type="submit" class="w-full py-2 px-4 btn-ink font-medium rounded text-sm transition">
-                                Lưu mục tiêu
+                                Save Recipient
                             </button>
                         </div>
                     </form>
@@ -1489,35 +1679,35 @@ def dashboard():
                     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-gray-50 p-4 rounded border border-gray-200">
                         <div>
                             <div class="flex items-center gap-3 flex-wrap">
-                                <span class="text-xs font-semibold text-gray-900" id="csvFileNameTitle">File CSV</span>
+                                <span class="text-xs font-semibold text-gray-900" id="csvFileNameTitle">CSV File</span>
                                 <span id="csvStatsBadge" class="text-xs font-mono-code text-gray-500"></span>
                             </div>
                             <p class="text-xs text-gray-400 mt-1">
-                                Cột: <code class="font-mono-code text-gray-600">Display name</code> &rarr; Tên | <code class="font-mono-code text-gray-600">User principal name</code> &rarr; Email | <code class="font-mono-code text-gray-600">Department</code> &rarr; Phòng ban
+                                Columns: <code class="font-mono-code text-gray-600">Display name</code> &rarr; Name | <code class="font-mono-code text-gray-600">User principal name</code> &rarr; Email | <code class="font-mono-code text-gray-600">Department</code> &rarr; Department
                             </p>
                         </div>
 
                         <div class="flex flex-wrap items-center gap-2">
                             <button type="button" onclick="toggleAllCsvValid(true)" class="px-3 py-1.5 btn-outline rounded text-xs font-medium transition">
-                                Chọn tất cả hợp lệ
+                                Select All Valid
                             </button>
                             <button type="button" onclick="toggleAllCsvValid(false)" class="px-3 py-1.5 btn-outline rounded text-xs font-medium transition">
-                                Bỏ chọn tất cả
+                                Deselect All
                             </button>
                             <button type="button" onclick="closeCsvPreview()" class="px-3 py-1.5 text-gray-400 hover:text-gray-900 text-xs font-medium transition">
-                                Đóng
+                                Close
                             </button>
                         </div>
                     </div>
 
                     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                        <input type="text" id="csvSearchInput" oninput="filterCsvTable()" placeholder="Lọc theo tên, email hoặc phòng ban..."
+                        <input type="text" id="csvSearchInput" oninput="filterCsvTable()" placeholder="Filter by name, email, or department..."
                             class="flex-1 px-3 py-2 border border-gray-200 rounded text-xs sm:text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-gray-900 transition">
 
                         <form id="csvBulkForm" action="/users/import-bulk" method="POST" onsubmit="return submitSelectedCsvUsers();">
                             <input type="hidden" name="users_json" id="csvUsersJsonInput" value="[]">
                             <button type="submit" id="csvSubmitBtn" class="w-full sm:w-auto px-5 py-2 btn-ink font-medium rounded text-xs sm:text-sm transition">
-                                <span id="csvSubmitBtnText">Thêm các user đã chọn (0)</span>
+                                <span id="csvSubmitBtnText">Import Selected (0)</span>
                             </button>
                         </form>
                     </div>
@@ -1527,11 +1717,11 @@ def dashboard():
                             <table class="min-w-full divide-y divide-gray-200 text-xs sm:text-sm">
                                 <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
                                     <tr>
-                                        <th class="py-2.5 px-3 text-center w-10 label-micro">Chọn</th>
-                                        <th class="py-2.5 px-3 text-left label-micro">Họ và tên</th>
+                                        <th class="py-2.5 px-3 text-center w-10 label-micro">Select</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Full Name</th>
                                         <th class="py-2.5 px-3 text-left label-micro">Email</th>
-                                        <th class="py-2.5 px-3 text-left label-micro">Phòng ban</th>
-                                        <th class="py-2.5 px-3 text-left label-micro">Trạng thái</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Department</th>
+                                        <th class="py-2.5 px-3 text-left label-micro">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody id="csvPreviewTbody" class="divide-y divide-gray-100 bg-white">
@@ -1542,17 +1732,32 @@ def dashboard():
                 </div>
             </div>
 
-            <!-- TABLE 1: TARGET USERS -->
+            <!-- TABLE 1: TARGET RECIPIENTS -->
             <div id="liveUsersTableCard" class="bg-white rounded-md border border-gray-200 overflow-hidden">
-                <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center gap-3">
-                    <div class="flex items-center gap-2 min-w-0">
-                        <span class="text-sm font-semibold text-gray-900">Danh sách mục tiêu</span>
-                        <span class="hidden sm:inline-block text-xs font-mono-code text-gray-400">({{ total_users }})</span>
+                <div class="px-5 py-4 border-b border-gray-200 flex flex-wrap justify-between items-center gap-3">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <span class="text-sm font-semibold text-gray-900">Recipient List</span>
+                        <span class="text-xs font-mono-code text-gray-400">({{ total_users }})</span>
+                        {% if sending_running %}
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-gray-100 text-gray-800 text-xs font-mono-code">
+                            <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping"></span>
+                            Sending {{ sending_sent }}/{{ sending_total }}
+                        </span>
+                        {% endif %}
                     </div>
-                    <div class="flex items-center gap-3 flex-shrink-0">
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        {% if unsent_users > 0 and unsent_users < total_users %}
                         <form action="/campaign/send-all" method="POST" class="inline">
+                            <input type="hidden" name="mode" value="unsent">
+                            <button type="submit" class="inline-flex items-center gap-1.5 px-3 py-2 btn-outline rounded text-xs font-medium transition">
+                                <span>Send to Unsent ({{ unsent_users }})</span>
+                            </button>
+                        </form>
+                        {% endif %}
+                        <form action="/campaign/send-all" method="POST" class="inline">
+                            <input type="hidden" name="mode" value="all">
                             <button type="submit" class="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 btn-ink rounded text-xs font-medium tracking-wide transition">
-                                <span>Gửi mail cho tất cả</span>
+                                <span>Send Email to All</span>
                             </button>
                         </form>
                     </div>
@@ -1578,12 +1783,12 @@ def dashboard():
                                     {% if u.clicked %}
                                         <span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-600">
                                             <span class="w-1.5 h-1.5 rounded-full bg-red-600"></span>
-                                            Đã click
+                                            Clicked
                                         </span>
                                     {% else %}
                                         <span class="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500">
                                             <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                                            An toàn
+                                            Safe
                                         </span>
                                     {% endif %}
                                 </div>
@@ -1591,11 +1796,11 @@ def dashboard():
 
                             <div class="text-xs text-gray-500 border-t border-gray-100 pt-2.5 grid grid-cols-2 gap-2">
                                 <div>
-                                    <span class="text-gray-400 block">Gửi lúc</span>
+                                    <span class="text-gray-400 block">Last Sent</span>
                                     <span class="font-mono-code text-gray-700">{{ u.last_sent_at }}</span>
                                 </div>
                                 <div>
-                                    <span class="text-gray-400 block">IP / Click</span>
+                                    <span class="text-gray-400 block">IP / Click Time</span>
                                     <span class="font-mono-code text-gray-700">{{ u.ip }}</span>
                                     {% if u.timestamp != 'N/A' %}
                                     <span class="block text-red-600 font-mono-code">{{ u.timestamp }}</span>
@@ -1606,19 +1811,19 @@ def dashboard():
                             <div class="grid grid-cols-3 gap-2 pt-1">
                                 <form action="/users/send/{{ u.id }}" method="POST" class="w-full">
                                     <button type="submit" class="w-full py-1.5 px-2 btn-ink rounded text-xs font-medium transition">
-                                        Gửi mail
+                                        Send
                                     </button>
                                 </form>
 
                                 <button type="button"
                                     onclick="copyLink('{{ base_url }}/{{ tracking_path }}/{{ u.token }}')"
                                     class="w-full py-1.5 px-2 btn-outline rounded text-xs font-medium transition">
-                                    Sao chép
+                                    Copy Link
                                 </button>
 
-                                <form action="/users/delete/{{ u.id }}" method="POST" class="w-full" onsubmit="return confirm('Xóa user {{ u.email }}?');">
+                                <form action="/users/delete/{{ u.id }}" method="POST" class="w-full" onsubmit="return confirm('Remove recipient {{ u.email }}?');">
                                     <button type="submit" class="w-full py-1.5 px-2 bg-white hover:bg-red-50 text-red-600 border border-gray-200 rounded text-xs font-medium transition">
-                                        Xóa
+                                        Delete
                                     </button>
                                 </form>
                             </div>
@@ -1632,12 +1837,12 @@ def dashboard():
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="py-3 px-5 text-left label-micro">ID</th>
-                                    <th class="py-3 px-5 text-left label-micro">Nhân sự</th>
-                                    <th class="py-3 px-5 text-left label-micro">Phòng ban</th>
-                                    <th class="py-3 px-5 text-left label-micro">Trạng thái</th>
-                                    <th class="py-3 px-5 text-left label-micro">IP &amp; Thời gian</th>
-                                    <th class="py-3 px-5 text-left label-micro">Đường dẫn</th>
-                                    <th class="py-3 px-5 text-right label-micro">Thao tác</th>
+                                    <th class="py-3 px-5 text-left label-micro">Recipient</th>
+                                    <th class="py-3 px-5 text-left label-micro">Department</th>
+                                    <th class="py-3 px-5 text-left label-micro">Status</th>
+                                    <th class="py-3 px-5 text-left label-micro">IP &amp; Timestamp</th>
+                                    <th class="py-3 px-5 text-left label-micro">Tracking Link</th>
+                                    <th class="py-3 px-5 text-right label-micro">Actions</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100 bg-white">
@@ -1647,19 +1852,19 @@ def dashboard():
                                     <td class="py-3.5 px-5">
                                         <div class="font-medium text-gray-900">{{ u.name }}</div>
                                         <div class="text-xs text-gray-500 font-mono-code mt-0.5">{{ u.email }}</div>
-                                        <div class="text-xs text-gray-400 mt-0.5">Gửi lúc: {{ u.last_sent_at }}</div>
+                                        <div class="text-xs text-gray-400 mt-0.5">Sent: {{ u.last_sent_at }}</div>
                                     </td>
                                     <td class="py-3.5 px-5 text-xs text-gray-600">{{ u.department }}</td>
                                     <td class="py-3.5 px-5">
                                         {% if u.clicked %}
                                             <span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-600">
                                                 <span class="w-1.5 h-1.5 rounded-full bg-red-600"></span>
-                                                Đã click
+                                                Clicked
                                             </span>
                                         {% else %}
                                             <span class="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500">
                                                 <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                                                An toàn
+                                                Safe
                                             </span>
                                         {% endif %}
                                     </td>
@@ -1684,12 +1889,12 @@ def dashboard():
                                     <td class="py-3.5 px-5 text-right whitespace-nowrap space-x-1.5">
                                         <form action="/users/send/{{ u.id }}" method="POST" class="inline">
                                             <button type="submit" class="px-3 py-1.5 btn-outline rounded text-xs font-medium transition">
-                                                Gửi mail
+                                                Send
                                             </button>
                                         </form>
-                                        <form action="/users/delete/{{ u.id }}" method="POST" class="inline" onsubmit="return confirm('Xóa user {{ u.email }}?');">
+                                        <form action="/users/delete/{{ u.id }}" method="POST" class="inline" onsubmit="return confirm('Remove recipient {{ u.email }}?');">
                                             <button type="submit" class="px-2.5 py-1.5 text-gray-400 hover:text-red-600 text-xs font-medium transition">
-                                                Xóa
+                                                Delete
                                             </button>
                                         </form>
                                     </td>
@@ -1700,7 +1905,7 @@ def dashboard():
                     </div>
                 {% else %}
                     <div class="py-12 px-4 text-center text-gray-400 text-sm">
-                        Chưa có mục tiêu nào trong cơ sở dữ liệu.
+                        No recipients in the database yet.
                     </div>
                 {% endif %}
             </div>
@@ -1709,7 +1914,7 @@ def dashboard():
             <div id="liveLogsTableCard" class="bg-white rounded-md border border-gray-200 overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
                     <div>
-                        <span class="text-sm font-semibold text-gray-900">Nhật ký truy cập</span>
+                        <span class="text-sm font-semibold text-gray-900">Click Activity Log</span>
                         <span class="hidden sm:inline-block ml-2 text-xs font-mono-code text-gray-400">click_logs</span>
                     </div>
                     <span class="text-xs font-mono-code text-gray-500">{{ click_logs|length }} events</span>
@@ -1739,10 +1944,10 @@ def dashboard():
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="py-3 px-5 text-left label-micro">ID</th>
-                                    <th class="py-3 px-5 text-left label-micro">Thời gian</th>
-                                    <th class="py-3 px-5 text-left label-micro">Nhân sự</th>
-                                    <th class="py-3 px-5 text-left label-micro">Phòng ban</th>
-                                    <th class="py-3 px-5 text-left label-micro">Địa chỉ IP</th>
+                                    <th class="py-3 px-5 text-left label-micro">Timestamp</th>
+                                    <th class="py-3 px-5 text-left label-micro">Recipient</th>
+                                    <th class="py-3 px-5 text-left label-micro">Department</th>
+                                    <th class="py-3 px-5 text-left label-micro">IP Address</th>
                                     <th class="py-3 px-5 text-left label-micro">User-Agent</th>
                                 </tr>
                             </thead>
@@ -1765,16 +1970,16 @@ def dashboard():
                     </div>
                 {% else %}
                     <div class="py-10 px-4 text-center text-gray-400 text-sm">
-                        Chưa có sự kiện click nào được ghi nhận.
+                        No click events recorded yet.
                     </div>
                 {% endif %}
             </div>
 
         </main>
 
-        <!-- Minimal Toast -->
+        <!-- Minimal Copy Toast -->
         <div id="copyToast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 hidden bg-black text-white text-xs font-medium px-4 py-2 rounded">
-            Đã sao chép liên kết vào bộ nhớ tạm
+            Tracking link copied to clipboard
         </div>
 
         <!-- Live Click Notification Toast -->
@@ -1818,7 +2023,7 @@ def dashboard():
                 }
             }
 
-            // Giữ thanh địa chỉ luôn sạch (/dashboard) và tự động ẩn thông báo sau 10 giây
+            // Keep URL bar clean (/dashboard) and auto-dismiss notifications after 10 seconds
             (function() {
                 if (window.location.search && window.history && window.history.replaceState) {
                     window.history.replaceState({}, document.title, window.location.pathname);
@@ -1829,7 +2034,7 @@ def dashboard():
                 }
             })();
 
-            // --- CẬP NHẬT REALTIME DỮ LIỆU CLICK MỖI 3 GIÂY (KHÔNG CẦN F5 TRANG) ---
+            // --- REAL-TIME POLLING EVERY 3 SECONDS (CLICKS + EMAIL DELIVERY PROGRESS) ---
             var currentLiveSig = null;
             var currentLatestLogId = null;
             var isUpdatingDom = false;
@@ -1878,7 +2083,7 @@ def dashboard():
                     .then(function(res) { return res.json(); })
                     .then(function(data) {
                         if (!data || !data.ok) return;
-                        var sig = data.total_users + ':' + data.clicked_users + ':' + data.total_logs + ':' + data.latest_log_id;
+                        var sig = data.total_users + ':' + data.clicked_users + ':' + data.total_logs + ':' + data.latest_log_id + ':' + (data.sent_sig || '');
                         if (currentLiveSig === null) {
                             currentLiveSig = sig;
                             currentLatestLogId = data.latest_log_id;
@@ -1897,7 +2102,7 @@ def dashboard():
             setInterval(pollLiveState, 3000);
             pollLiveState();
 
-            // --- XỬ LÝ QUÉT & XEM TRƯỚC FILE CSV (userAccount.csv) ---
+            // --- CSV PARSING & PREVIEW (userAccount.csv) ---
             var scannedCsvUsers = [];
 
             function parseCsvRow(line) {
@@ -1926,7 +2131,6 @@ def dashboard():
 
             function isValidEmailFormat(email) {
                 if (!email) return false;
-                // Loại bỏ các tài khoản Guest chứa #EXT# hoặc sai cấu trúc email chuẩn
                 if (email.indexOf('#') !== -1 || email.indexOf(' ') !== -1) return false;
                 var re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$/;
                 return re.test(email);
@@ -1934,7 +2138,7 @@ def dashboard():
 
             function formatDisplayName(rawName) {
                 var cleaned = String(rawName || '').trim();
-                if (!cleaned) return 'Nhân viên';
+                if (!cleaned) return 'Employee';
                 var commaIdx = cleaned.indexOf(',');
                 if (commaIdx !== -1) {
                     var firstPart = cleaned.slice(0, commaIdx).trim();
@@ -1965,7 +2169,7 @@ def dashboard():
                     }
                     var lines = content.split(/\\r?\\n/).filter(function(l) { return l.trim().length > 0; });
                     if (lines.length < 2) {
-                        alert('File CSV trống hoặc không có dữ liệu!');
+                        alert('The selected CSV file is empty or contains no data rows.');
                         return;
                     }
 
@@ -1979,7 +2183,7 @@ def dashboard():
                     var idxDept = headers.indexOf('department');
 
                     if (idxEmail === -1) {
-                        alert('Không tìm thấy cột "User principal name" (hoặc "Email") trong file CSV!');
+                        alert('Column "User principal name" (or "Email") was not found in the CSV file.');
                         return;
                     }
 
@@ -1991,8 +2195,8 @@ def dashboard():
                         if (cols.length <= idxEmail) continue;
 
                         var rawEmail = (cols[idxEmail] || '').trim().toLowerCase();
-                        var rawName = (idxName !== -1 && cols[idxName]) ? formatDisplayName(cols[idxName]) : 'Nhân viên';
-                        var rawDept = (idxDept !== -1 && cols[idxDept]) ? cols[idxDept].trim() : 'Chưa phân loại';
+                        var rawName = (idxName !== -1 && cols[idxName]) ? formatDisplayName(cols[idxName]) : 'Employee';
+                        var rawDept = (idxDept !== -1 && cols[idxDept]) ? cols[idxDept].trim() : 'Unassigned';
 
                         if (!rawEmail && !rawName) continue;
                         if (rawEmail && seenInCsv[rawEmail]) continue;
@@ -2001,9 +2205,9 @@ def dashboard():
                         var valid = isValidEmailFormat(rawEmail);
                         scannedCsvUsers.push({
                             index: scannedCsvUsers.length,
-                            name: rawName || 'Nhân viên',
+                            name: rawName || 'Employee',
                             email: rawEmail,
-                            department: rawDept || 'Chưa phân loại',
+                            department: rawDept || 'Unassigned',
                             valid: valid,
                             checked: valid
                         });
@@ -2033,8 +2237,8 @@ def dashboard():
 
                     var rowBg = u.valid ? 'hover:bg-gray-50 cursor-pointer' : 'bg-gray-50 opacity-60';
                     var badge = u.valid
-                        ? '<span class="inline-flex items-center gap-1.5 text-xs text-gray-600"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>Hợp lệ</span>'
-                        : '<span class="inline-flex items-center gap-1.5 text-xs text-red-600"><span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>Sai định dạng</span>';
+                        ? '<span class="inline-flex items-center gap-1.5 text-xs text-gray-600"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>Valid</span>'
+                        : '<span class="inline-flex items-center gap-1.5 text-xs text-red-600"><span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>Invalid format</span>';
 
                     html += '<tr class="' + rowBg + ' transition" onclick="toggleCsvRow(' + u.index + ', event)">' +
                         '<td class="py-2.5 px-3 text-center">' +
@@ -2050,7 +2254,7 @@ def dashboard():
                 }
 
                 if (!html) {
-                    html = '<tr><td colspan="5" class="py-8 text-center text-gray-400 text-xs">Không tìm thấy kết quả phù hợp.</td></tr>';
+                    html = '<tr><td colspan="5" class="py-8 text-center text-gray-400 text-xs">No matching rows found.</td></tr>';
                 }
 
                 tbody.innerHTML = html;
@@ -2093,7 +2297,7 @@ def dashboard():
                 document.getElementById('csvStatsBadge').textContent =
                     total + ' rows · ' + validCount + ' valid · ' + selectedCount + ' selected';
                 document.getElementById('csvSubmitBtnText').textContent =
-                    'Thêm các user đã chọn (' + selectedCount + ')';
+                    'Import Selected (' + selectedCount + ')';
             }
 
             function closeCsvPreview() {
@@ -2114,13 +2318,13 @@ def dashboard():
                     }
                 }
                 if (selected.length === 0) {
-                    alert('Vui lòng tick chọn ít nhất 1 user để thêm vào Database!');
+                    alert('Please select at least one recipient to import.');
                     return false;
                 }
                 document.getElementById('csvUsersJsonInput').value = JSON.stringify(selected);
                 var btn = document.getElementById('csvSubmitBtn');
                 btn.disabled = true;
-                document.getElementById('csvSubmitBtnText').textContent = 'Đang lưu ' + selected.length + ' user...';
+                document.getElementById('csvSubmitBtnText').textContent = 'Importing ' + selected.length + ' recipients...';
                 return true;
             }
         </script>
@@ -2132,6 +2336,7 @@ def dashboard():
         html_content,
         total_users=total_users,
         clicked_users=clicked_users,
+        unsent_users=unsent_users,
         click_rate=click_rate,
         user_list=user_list,
         click_logs=click_logs,
@@ -2140,15 +2345,20 @@ def dashboard():
         saved_webhook=saved_webhook,
         saved_smtp_username=saved_smtp_username,
         saved_smtp_password=saved_smtp_password,
+        saved_sender_name=saved_sender_name,
+        saved_email_subject=saved_email_subject,
+        sending_running=sending_running,
+        sending_sent=sending_sent,
+        sending_total=sending_total,
         msg=msg,
         status=status
     )
 
-# --- Điểm chạy chính ---
+# --- Main Entrypoint ---
 if __name__ == '__main__':
     server_conf = config.get("server", {})
     host = server_conf.get("host", "0.0.0.0")
     port = int(os.environ.get("PORT", server_conf.get("port", 5000)))
 
-    safe_log(f"\n[OK] Khởi động Flask Server tại http://{host}:{port}/dashboard")
+    safe_log(f"\n[OK] Starting Flask Server at http://{host}:{port}/dashboard")
     app.run(host=host, port=port, debug=True)
