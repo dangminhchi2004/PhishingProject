@@ -68,7 +68,6 @@ The application automatically initializes three tables via SQLAlchemy:
 ```text
 ├── icon/
 │   └── PhisingIconOk.png      # Browser tab favicon
-├── screenshots/               # UI reference screenshots
 ├── .gitignore                 # Excludes .env, config.json, *.csv, __pycache__/
 ├── config.example.json        # Example local configuration file
 ├── phishing-test.py           # Main Flask application, ORM models, routes & Minimalist UI
