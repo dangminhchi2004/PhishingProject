@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr
-from flask import Flask, request, redirect, url_for, render_template_string, session as flask_session
+from flask import Flask, request, redirect, url_for, render_template_string, send_from_directory, session as flask_session
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 
@@ -522,6 +522,16 @@ def _background_send_worker(user_ids, base_url, tracking_path):
 
 # --- Flask Routes ---
 
+@app.route('/favicon.ico')
+def favicon():
+    """Serve browser tab favicon"""
+    return send_from_directory(os.path.join(BASE_DIR, 'icon'), 'PhisingIconOk.png', mimetype='image/png')
+
+@app.route('/icon/<path:filename>')
+def serve_icon(filename):
+    """Serve icon assets from the icon/ directory"""
+    return send_from_directory(os.path.join(BASE_DIR, 'icon'), filename)
+
 @app.route('/')
 def home():
     """
@@ -535,6 +545,8 @@ def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>403 — Access Restricted</title>
+        <link rel="icon" type="image/png" href="/icon/PhisingIconOk.png">
+        <link rel="shortcut icon" href="/favicon.ico">
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -581,6 +593,8 @@ def admin_login():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Sign In — Admin Console</title>
+        <link rel="icon" type="image/png" href="/icon/PhisingIconOk.png">
+        <link rel="shortcut icon" href="/favicon.ico">
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -1091,6 +1105,8 @@ def handle_click(token):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Employee Information Verification Portal</title>
+            <link rel="icon" type="image/png" href="/icon/PhisingIconOk.png">
+            <link rel="shortcut icon" href="/favicon.ico">
             <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
             <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
             <style>
@@ -1184,6 +1200,8 @@ def awareness_page():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Security Awareness Notice</title>
+        <link rel="icon" type="image/png" href="/icon/PhisingIconOk.png">
+        <link rel="shortcut icon" href="/favicon.ico">
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
@@ -1385,6 +1403,8 @@ def dashboard():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Phishing Simulation — Admin Console</title>
+        <link rel="icon" type="image/png" href="/icon/PhisingIconOk.png">
+        <link rel="shortcut icon" href="/favicon.ico">
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
         <style>
