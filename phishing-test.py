@@ -384,38 +384,114 @@ Trân trọng,
 Bộ phận Quản Trị Hệ Thống & Nhân Sự
 """
 
-    # HTML body with hyperlink and CTA button
-    html_body = f"""
-    <div style="font-family: Arial, Helvetica, sans-serif; color: #222222; max-width: 600px; line-height: 1.6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background-color: #ffffff;">
-        <h2 style="color: #1e40af; margin-top: 0; font-size: 18px; border-bottom: 2px solid #eff6ff; padding-bottom: 10px;">
-            {sender_name} - Thông Báo Xác Thực Định Kỳ
-        </h2>
-        <p>Kính gửi <strong>{recipient_name}</strong>,</p>
-        <p>
-            Hệ thống quản trị ghi nhận tài khoản nhân viên của bạn cần được đồng bộ và xác thực thông tin quyền lợi nhân sự định kỳ.
-        </p>
-        <p>
-            Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấn vào liên kết
-            <a href="{unique_link}" style="color: #2563eb; font-weight: bold; text-decoration: underline;">Cổng Xác Thực Nhân Sự Nội Bộ</a>
-            hoặc bấm vào nút bên dưới để hoàn tất kiểm tra:
-        </p>
-        <div style="text-align: center; margin: 28px 0;">
-            <a href="{unique_link}"
-               style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-               Xác Thực Tài Khoản Nhân Viên
-            </a>
-        </div>
-        <p style="font-size: 13px; color: #6b7280;">
-            <em>Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.</em>
-        </p>
-        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-        <p style="font-size: 13px; color: #4b5563; margin-bottom: 0;">
-            Trân trọng,<br>
-            <strong>{sender_name}</strong><br>
-            Bộ phận Quản Trị Hệ Thống &amp; Nhân Sự
-        </p>
-    </div>
-    """
+    # Bulletproof HTML body compatible with Outlook Classic (Word/MSO engine), Outlook Web, and Gmail
+    html_body = f"""<!DOCTYPE html>
+<html lang="vi" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{subject}</title>
+    <!--[if mso]>
+    <xml>
+        <o:OfficeDocumentSettings>
+            <o:AllowPNG/>
+            <o:PixelsPerInch>96</o:PixelsPerInch>
+        </o:OfficeDocumentSettings>
+    </xml>
+    <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: Arial, Helvetica, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #ffffff;">
+        <tr>
+            <td align="left" style="padding: 16px;">
+                <!--[if mso]>
+                <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                <td>
+                <![endif]-->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; width: 100%; border: 1px solid #e5e7eb; border-collapse: collapse; background-color: #ffffff;">
+                    <tr>
+                        <td style="padding: 24px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 22px; color: #222222;">
+                            <!-- Header -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                <tr>
+                                    <td style="font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: bold; color: #1e40af; padding-bottom: 12px; border-bottom: 2px solid #eff6ff;">
+                                        {sender_name} - Thông Báo Xác Thực Định Kỳ
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Body Copy -->
+                            <p style="margin: 16px 0 12px 0; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 22px; color: #222222;">
+                                Kính gửi <strong>{recipient_name}</strong>,
+                            </p>
+                            <p style="margin: 0 0 12px 0; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 22px; color: #222222;">
+                                Hệ thống quản trị ghi nhận tài khoản nhân viên của bạn cần được đồng bộ và xác thực thông tin quyền lợi nhân sự định kỳ.
+                            </p>
+                            <p style="margin: 0 0 24px 0; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 22px; color: #222222;">
+                                Để đảm bảo quyền truy cập cổng nội bộ và các chế độ phúc lợi không bị gián đoạn, vui lòng nhấn vào liên kết
+                                <a href="{unique_link}" target="_blank" style="color: #2563eb; font-weight: bold; text-decoration: underline;">Cổng Xác Thực Nhân Sự Nội Bộ</a>
+                                hoặc bấm vào nút bên dưới để hoàn tất kiểm tra:
+                            </p>
+
+                            <!-- Bulletproof CTA Button for Outlook Classic (VML + Table Cell) -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 24px 0;">
+                                <tr>
+                                    <td align="center">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                                            href="{unique_link}"
+                                            style="height:44px;v-text-anchor:middle;width:260px;" arcsize="14%" stroke="f" fillcolor="#2563eb">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;">
+                                                Xác Thực Tài Khoản Nhân Viên
+                                            </center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-- -->
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="border-collapse: separate;">
+                                            <tr>
+                                                <td align="center" bgcolor="#2563eb" style="background-color: #2563eb; border-radius: 6px;">
+                                                    <a href="{unique_link}" target="_blank"
+                                                       style="display: inline-block; padding: 12px 24px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 6px; background-color: #2563eb; border: 1px solid #2563eb;">
+                                                        Xác Thực Tài Khoản Nhân Viên
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Expiry Notice -->
+                            <p style="margin: 0 0 18px 0; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 20px; color: #6b7280; font-style: italic;">
+                                Lưu ý: Yêu cầu xác thực có hiệu lực trong vòng 24 giờ kể từ khi thông báo được phát hành.
+                            </p>
+
+                            <!-- Divider & Signature -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                <tr>
+                                    <td style="border-top: 1px solid #e5e7eb; padding-top: 16px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 20px; color: #4b5563;">
+                                        Trân trọng,<br>
+                                        <strong style="color: #222222;">{sender_name}</strong><br>
+                                        Bộ phận Quản Trị Hệ Thống &amp; Nhân Sự
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+                <!--[if mso]>
+                </td>
+                </tr>
+                </table>
+                <![endif]-->
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
 
     # 1. HTTPS Webhook (Google Apps Script over port 443)
     webhook_url = get_saved_webhook_url()
